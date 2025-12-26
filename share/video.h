@@ -17,47 +17,20 @@
 
 /*---------------------------------------------------------------------------*/
 
-struct video
-{
-    int device_w, device_h;
-    int window_w, window_h;
-
-    float device_scale;
-};
-
-extern struct video video;
-
-int  video_init(void);
-void video_quit(void);
+int video_init(const char *, const char *);
 
 /*---------------------------------------------------------------------------*/
 
 int  video_mode(int, int, int);
 
-void video_snap(const char *);
 int  video_perf(void);
 void video_swap(void);
-
-void video_show_cursor(void);
-void video_hide_cursor(void);
 
 void video_set_grab(int w);
 void video_clr_grab(void);
 int  video_get_grab(void);
 
-int  video_fullscreen(int);
-
-void video_resize(int, int);
-
-int  video_display(void);
-
-void video_set_window_size(int w, int h);
-
 /*---------------------------------------------------------------------------*/
-
-void video_calc_view(float *, const float *,
-                              const float *,
-                              const float *);
 
 void video_push_persp(float, float, float);
 void video_push_ortho(void);

@@ -23,7 +23,6 @@
 #include "image.h"
 #include "base_image.h"
 #include "config.h"
-#include "video.h"
 
 #include "fs.h"
 #include "fs_png.h"
@@ -37,15 +36,15 @@ void image_snap(const char *filename)
     png_infop   infop  = NULL;
     png_bytep  *bytep  = NULL;
 
-    int w = video.device_w;
-    int h = video.device_h;
+    int w = config_get_d(CONFIG_WIDTH);
+    int h = config_get_d(CONFIG_HEIGHT);
     int i;
 
     unsigned char *p = NULL;
 
     /* Initialize all PNG export data structures. */
 
-    if (!(filep = fs_open_write(filename)))
+    if (!(filep = fs_open(filename, "w")))
         return;
     if (!(writep = png_create_write_struct(PNG_LIBPNG_VER_STRING, 0, 0, 0)))
         return;
@@ -67,23 +66,23 @@ void image_snap(const char *filename)
 
         /* Allocate the pixel buffer and copy pixels there. */
 
-        if ((p = (unsigned char *) malloc(w * h * 4)))
+        if ((p = (unsigned char *) malloc(w * h * 3)))
         {
-            glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, p);
+            glReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, p);
 
             /* Allocate and initialize the row pointers. */
 
             if ((bytep = (png_bytep *) png_malloc(writep, h * sizeof (png_bytep))))
             {
                 for (i = 0; i < h; ++i)
-                    bytep[h - i - 1] = (png_bytep) (p + i * w * 4);
+                    bytep[h - i - 1] = (png_bytep) (p + i * w * 3);
+
+                png_set_rows (writep, infop, bytep);
 
                 /* Write the PNG image file. */
 
                 png_write_info(writep, infop);
-                png_set_filler(writep, 0, PNG_FILLER_AFTER);
-                png_write_image(writep, bytep);
-                png_write_end(writep, infop);
+                png_write_png (writep, infop, 0, NULL);
 
                 free(bytep);
             }
@@ -102,7 +101,7 @@ void image_snap(const char *filename)
 /*
  * Create an OpenGL texture object using the given image buffer.
  */
-GLuint make_texture(const void *p, int w, int h, int b, int fl)
+static GLuint make_texture(const void *p, int w, int h, int b)
 {
     static const GLenum format[] =
         { 0, GL_LUMINANCE, GL_LUMINANCE_ALPHA, GL_RGB, GL_RGBA };
@@ -114,16 +113,16 @@ GLuint make_texture(const void *p, int w, int h, int b, int fl)
 #ifdef GL_TEXTURE_MAX_ANISOTROPY_EXT
     int a = config_get_d(CONFIG_ANISO);
 #endif
-#ifdef GL_GENERATE_MIPMAP_SGIS
-    int m = (fl & IF_MIPMAP) ? config_get_d(CONFIG_MIPMAP) : 0;
-#endif
+    int m = config_get_d(CONFIG_MIPMAP);
     int k = config_get_d(CONFIG_TEXTURES);
     int W = w;
     int H = h;
 
-    GLint max = gli.max_texture_size;
+    GLint max;
 
     void *q = NULL;
+
+    glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max);
 
     while (w / k > (int) max || h / k > (int) max)
         k *= 2;
@@ -136,8 +135,8 @@ GLuint make_texture(const void *p, int w, int h, int b, int fl)
     glGenTextures(1, &o);
     glBindTexture(GL_TEXTURE_2D, o);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -151,7 +150,7 @@ GLuint make_texture(const void *p, int w, int h, int b, int fl)
     }
 #endif
 #ifdef GL_TEXTURE_MAX_ANISOTROPY_EXT
-    if (a && gli.texture_filter_anisotropic) glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, a);
+    if (a) glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, a);
 #endif
 
     /* Copy the image to an OpenGL texture. */
@@ -162,13 +161,14 @@ GLuint make_texture(const void *p, int w, int h, int b, int fl)
 
     if (q) free(q);
 
+
     return o;
 }
 
 /*
  * Load an image from the named file.  Return an OpenGL texture object.
  */
-GLuint make_image_from_file(const char *filename, int fl)
+GLuint make_image_from_file(const char *filename)
 {
     void  *p;
     int    w;
@@ -180,7 +180,7 @@ GLuint make_image_from_file(const char *filename, int fl)
 
     if ((p = image_load(filename, &w, &h, &b)))
     {
-        o = make_texture(p, w, h, b, fl);
+        o = make_texture(p, w, h, b);
         free(p);
     }
 
@@ -196,13 +196,13 @@ GLuint make_image_from_file(const char *filename, int fl)
  */
 GLuint make_image_from_font(int *W, int *H,
                             int *w, int *h,
-                            const char *text, TTF_Font *font, int fl)
+                            const char *text, TTF_Font *font)
 {
     GLuint o = 0;
 
     /* Render the text. */
 
-    if (font && text && strlen(text) > 0)
+    if (text && strlen(text) > 0)
     {
         SDL_Color    col = { 0xFF, 0xFF, 0xFF, 0xFF };
         SDL_Surface *orig;
@@ -226,6 +226,9 @@ GLuint make_image_from_font(int *W, int *H,
 
             if ((src = SDL_ConvertSurface(orig, &fmt, orig->flags)) == NULL)
             {
+                fprintf(stderr, _("Failed to convert SDL_ttf surface: %s\n"),
+                        SDL_GetError());
+
                 /* Pretend everything's just fine. */
 
                 src = orig;
@@ -248,7 +251,7 @@ GLuint make_image_from_font(int *W, int *H,
 
             /* Create the OpenGL texture object. */
 
-            o = make_texture(p, w2, h2, b, fl);
+            o = make_texture(p, w2, h2, b);
 
             free(p);
             SDL_FreeSurface(src);
@@ -267,30 +270,6 @@ GLuint make_image_from_font(int *W, int *H,
     return o;
 }
 
-/*
- * Measure text without rendering it.
- */
-void size_image_from_font(int *W, int *H,
-                          int *w, int *h,
-                          const char *text, TTF_Font *font)
-{
-    int text_w = 0;
-    int text_h = 0;
-    int w2 = 0;
-    int h2 = 0;
-
-    if (text)
-        TTF_SizeUTF8(font, text, &text_w, &text_h);
-
-    if (w) *w = text_w;
-    if (h) *h = text_h;
-
-    image_size(&w2, &h2, text_w, text_h);
-
-    if (W) *W = w2;
-    if (H) *H = h2;
-}
-
 /*---------------------------------------------------------------------------*/
 
 /*
@@ -305,15 +284,30 @@ SDL_Surface *load_surface(const char *filename)
 
     SDL_Surface *srf = NULL;
 
+    Uint32 rmask;
+    Uint32 gmask;
+    Uint32 bmask;
+    Uint32 amask;
+
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+    rmask = 0xFF000000;
+    gmask = 0x00FF0000;
+    bmask = 0x0000FF00;
+    amask = 0x000000FF;
+#else
+    rmask = 0x000000FF;
+    gmask = 0x0000FF00;
+    bmask = 0x00FF0000;
+    amask = 0xFF000000;
+#endif
+
     if ((p = image_load(filename, &w, &h, &b)))
     {
         void *q;
 
         if ((q = image_flip(p, w, h, b, 0, 1)))
-        {
             srf = SDL_CreateRGBSurfaceFrom(q, w, h, b * 8, w * b,
-                                           RMASK, GMASK, BMASK, AMASK);
-        }
+                                           rmask, gmask, bmask, amask);
         free(p);
     }
     return srf;

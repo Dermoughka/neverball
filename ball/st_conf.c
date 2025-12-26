@@ -13,17 +13,17 @@
  */
 
 #include "gui.h"
-#include "transition.h"
 #include "hud.h"
+#include "back.h"
 #include "geom.h"
+#include "item.h"
 #include "ball.h"
 #include "part.h"
 #include "audio.h"
 #include "config.h"
 #include "video.h"
+#include "st_shared.h"
 #include "common.h"
-#include "version.h"
-#include "lang.h"
 
 #include "game_common.h"
 #include "game_client.h"
@@ -31,79 +31,128 @@
 
 #include "st_conf.h"
 #include "st_title.h"
-#include "st_common.h"
+#include "st_resol.h"
 #include "st_name.h"
 #include "st_ball.h"
-#include "st_shared.h"
 
 extern const char TITLE[];
 extern const char ICON[];
 
 /*---------------------------------------------------------------------------*/
 
-enum
-{
-    CONF_VIDEO = GUI_LAST,
-    CONF_LANGUAGE,
-    CONF_MOUSE_SENSE,
-    CONF_JOYSTICK,
-    CONF_SOUND_VOLUME,
-    CONF_MUSIC_VOLUME,
+enum {
+    CONF_FULL = 1,
+    CONF_WIN,
+    CONF_TEXHI,
+    CONF_TEXLO,
+    CONF_GEOHI,
+    CONF_GEOLO,
+    CONF_REFON,
+    CONF_REFOF,
+    CONF_BACON,
+    CONF_BACOF,
+    CONF_SHDON,
+    CONF_SHDOF,
+    CONF_BACK,
+    CONF_RES,
     CONF_PLAYER,
     CONF_BALL
 };
 
-static int mouse_id[11];
 static int music_id[11];
 static int sound_id[11];
 
-/*
- * This maps mouse_sense 300 (default) to the 7th of an 11 button
- * series. Effectively there are more options for a lower-than-default
- * sensitivity than for a higher one.
- */
-
-#define MOUSE_RANGE_MIN  100
-#define MOUSE_RANGE_INC  50
-#define MOUSE_RANGE_MAX (MOUSE_RANGE_MIN + (MOUSE_RANGE_INC * 10))
-
-/*
- * Map mouse_sense values to [0, 10]. A higher mouse_sense value means
- * lower sensitivity, thus counter-intuitively, 0 maps to the higher
- * value.
- */
-
-#define MOUSE_RANGE_MAP(m) \
-    CLAMP(0, (MOUSE_RANGE_MAX - m) / MOUSE_RANGE_INC, 10)
-
-#define MOUSE_RANGE_UNMAP(i) \
-    (MOUSE_RANGE_MAX - (i * MOUSE_RANGE_INC))
-
-static int conf_action(int tok, int val)
+static int conf_action(int i)
 {
-    int sound = config_get_d(CONFIG_SOUND_VOLUME);
-    int music = config_get_d(CONFIG_MUSIC_VOLUME);
-    int mouse = MOUSE_RANGE_MAP(config_get_d(CONFIG_MOUSE_SENSE));
+    int w = config_get_d(CONFIG_WIDTH);
+    int h = config_get_d(CONFIG_HEIGHT);
+    int s = config_get_d(CONFIG_SOUND_VOLUME);
+    int m = config_get_d(CONFIG_MUSIC_VOLUME);
     int r = 1;
 
     audio_play(AUD_MENU, 1.0f);
 
-    switch (tok)
+    switch (i)
     {
-    case GUI_BACK:
-        exit_state(&st_title);
+    case CONF_FULL:
+        goto_state(&st_null);
+        r = video_mode(1, w, h);
+        goto_state(&st_conf);
         break;
 
-    case CONF_VIDEO:
-        goto_state(&st_video);
+    case CONF_WIN:
+        goto_state(&st_null);
+        r = video_mode(0, w, h);
+        goto_state(&st_conf);
         break;
 
-    case CONF_JOYSTICK:
-        goto_state(&st_joystick);
+    case CONF_TEXHI:
+        goto_state(&st_null);
+        config_set_d(CONFIG_TEXTURES, 1);
+        goto_state(&st_conf);
         break;
 
-    case CONF_LANGUAGE:
-        goto_state(&st_lang);
+    case CONF_TEXLO:
+        goto_state(&st_null);
+        config_set_d(CONFIG_TEXTURES, 2);
+        goto_state(&st_conf);
+        break;
+
+    case CONF_GEOHI:
+        goto_state(&st_null);
+        config_set_d(CONFIG_GEOMETRY, 1);
+        goto_state(&st_conf);
+        break;
+
+    case CONF_GEOLO:
+        goto_state(&st_null);
+        config_set_d(CONFIG_GEOMETRY, 0);
+        goto_state(&st_conf);
+        break;
+
+    case CONF_REFON:
+        goto_state(&st_null);
+        config_set_d(CONFIG_REFLECTION, 1);
+        r = video_init(TITLE, ICON);
+        goto_state(&st_conf);
+        break;
+
+    case CONF_REFOF:
+        goto_state(&st_null);
+        config_set_d(CONFIG_REFLECTION, 0);
+        goto_state(&st_conf);
+        break;
+
+    case CONF_BACON:
+        goto_state(&st_null);
+        config_set_d(CONFIG_BACKGROUND, 1);
+        goto_state(&st_conf);
+        break;
+
+    case CONF_BACOF:
+        goto_state(&st_null);
+        config_set_d(CONFIG_BACKGROUND, 0);
+        goto_state(&st_conf);
+        break;
+
+    case CONF_SHDON:
+        goto_state(&st_null);
+        config_set_d(CONFIG_SHADOW, 1);
+        goto_state(&st_conf);
+        break;
+
+    case CONF_SHDOF:
+        goto_state(&st_null);
+        config_set_d(CONFIG_SHADOW, 0);
+        goto_state(&st_conf);
+        break;
+
+    case CONF_BACK:
+        goto_state(&st_title);
+        break;
+
+    case CONF_RES:
+        goto_state(&st_resol);
         break;
 
     case CONF_PLAYER:
@@ -114,167 +163,284 @@ static int conf_action(int tok, int val)
         goto_state(&st_ball);
         break;
 
-    case CONF_MOUSE_SENSE:
-        config_set_d(CONFIG_MOUSE_SENSE, MOUSE_RANGE_UNMAP(val));
+    default:
+        if (100 <= i && i <= 110)
+        {
+            int n = i - 100;
 
-        gui_toggle(mouse_id[val]);
-        gui_toggle(mouse_id[mouse]);
-        break;
+            config_set_d(CONFIG_SOUND_VOLUME, n);
+            audio_volume(n, m);
+            audio_play(AUD_BUMPM, 1.f);
 
-    case CONF_SOUND_VOLUME:
-        config_set_d(CONFIG_SOUND_VOLUME, val);
-        audio_volume(val, music);
-        audio_play(AUD_BUMPM, 1.f);
+            gui_toggle(sound_id[n]);
+            gui_toggle(sound_id[s]);
+        }
+        if (200 <= i && i <= 210)
+        {
+            int n = i - 200;
 
-        gui_toggle(sound_id[val]);
-        gui_toggle(sound_id[sound]);
-        break;
+            config_set_d(CONFIG_MUSIC_VOLUME, n);
+            audio_volume(s, n);
+            audio_play(AUD_BUMPM, 1.f);
 
-    case CONF_MUSIC_VOLUME:
-        config_set_d(CONFIG_MUSIC_VOLUME, val);
-        audio_volume(sound, val);
-        audio_play(AUD_BUMPM, 1.f);
-
-        gui_toggle(music_id[val]);
-        gui_toggle(music_id[music]);
-
-        break;
+            gui_toggle(music_id[n]);
+            gui_toggle(music_id[m]);
+        }
     }
 
     return r;
 }
 
-static int conf_gui(void)
+static int conf_enter(void)
 {
-    int root_id;
+    int id, jd, kd;
+
+    game_client_free();
+    back_init("back/gui.png", config_get_d(CONFIG_GEOMETRY));
 
     /* Initialize the configuration GUI. */
 
-    if ((root_id = gui_root()))
+    if ((id = gui_vstack(0)))
     {
-        int id;
+        int f = config_get_d(CONFIG_FULLSCREEN);
+        int t = config_get_d(CONFIG_TEXTURES);
+        int g = config_get_d(CONFIG_GEOMETRY);
+        int r = config_get_d(CONFIG_REFLECTION);
+        int b = config_get_d(CONFIG_BACKGROUND);
+        int h = config_get_d(CONFIG_SHADOW);
+        int s = config_get_d(CONFIG_SOUND_VOLUME);
+        int m = config_get_d(CONFIG_MUSIC_VOLUME);
 
-        if ((id = gui_vstack(root_id)))
+        const char *player = config_get_s(CONFIG_PLAYER);
+        const char *ball   = config_get_s(CONFIG_BALL_FILE);
+
+        char resolution[20];
+
+        int name_id = 0, ball_id = 0;
+
+        sprintf(resolution, "%d x %d",
+                config_get_d(CONFIG_WIDTH),
+                config_get_d(CONFIG_HEIGHT));
+
+        if ((jd = gui_harray(id)))
         {
-            int sound = config_get_d(CONFIG_SOUND_VOLUME);
-            int music = config_get_d(CONFIG_MUSIC_VOLUME);
-            int mouse = MOUSE_RANGE_MAP(config_get_d(CONFIG_MOUSE_SENSE));
-
-            const char *player = config_get_s(CONFIG_PLAYER);
-            const char *ball   = config_get_s(CONFIG_BALL_FILE);
-
-            int name_id, ball_id, lang_id;
-
-            conf_header(id, _("Options"), GUI_BACK);
-
-            conf_state(id, _("Graphics"), _("Configure"), CONF_VIDEO);
-
-            gui_space(id);
-
-            conf_slider(id, _("Mouse Sensitivity"), CONF_MOUSE_SENSE, mouse,
-                        mouse_id, ARRAYSIZE(mouse_id));
-
-            gui_space(id);
-
-            conf_state(id, _("Gamepad"), _("Configure"), CONF_JOYSTICK);
-
-            gui_space(id);
-
-            conf_slider(id, _("Sound Volume"), CONF_SOUND_VOLUME, sound,
-                        sound_id, ARRAYSIZE(sound_id));
-            conf_slider(id, _("Music Volume"), CONF_MUSIC_VOLUME, music,
-                        music_id, ARRAYSIZE(music_id));
-
-            gui_space(id);
-
-            name_id = conf_state(id, _("Player Name"), " ", CONF_PLAYER);
-            ball_id = conf_state(id, _("Ball Model"), " ", CONF_BALL);
-            lang_id = conf_state(id, _("Language"), " ", CONF_LANGUAGE);
-
-            gui_layout(id, 0, 0);
-
-            gui_set_trunc(lang_id, TRUNC_TAIL);
-            gui_set_trunc(name_id, TRUNC_TAIL);
-            gui_set_trunc(ball_id, TRUNC_TAIL);
-
-            gui_set_label(name_id, player);
-            gui_set_label(ball_id, base_name(ball));
-
-            if (*config_get_s(CONFIG_LANGUAGE))
-                gui_set_label(lang_id, lang_name(&curr_lang));
-            else
-                gui_set_label(lang_id, _("Default"));
+            gui_label(jd, _("Options"), GUI_SML, GUI_ALL, 0, 0);
+            gui_space(jd);
+            gui_start(jd, _("Back"),    GUI_SML, CONF_BACK, 0);
         }
 
-        if ((id = gui_vstack(root_id)))
-        {
-            gui_label(id, "Neverball " VERSION, GUI_TNY, gui_wht, gui_wht);
-            gui_multi(id, _(
-                "Copyright © 2025 Neverball authors\n"
-                "Neverball is free software available under the terms of GPL v2 or later."
-            ), GUI_TNY, gui_wht, gui_wht);
+        gui_space(id);
 
-            gui_clr_rect(id);
-            gui_layout(id, 0, -1);
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            gui_state(kd, _("No"),  GUI_SML, CONF_WIN,  (f == 0));
+            gui_state(kd, _("Yes"), GUI_SML, CONF_FULL, (f == 1));
+
+            gui_label(jd, _("Fullscreen"), GUI_SML, GUI_ALL, 0, 0);
         }
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            gui_state(kd, resolution, GUI_SML, CONF_RES, 0);
+
+            gui_label(jd, _("Resolution"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        gui_space(id);
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            gui_state(kd, _("Low"),  GUI_SML, CONF_TEXLO, (t == 2));
+            gui_state(kd, _("High"), GUI_SML, CONF_TEXHI, (t == 1));
+
+            gui_label(jd, _("Textures"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            gui_state(kd, _("Low"),  GUI_SML, CONF_GEOLO, (g == 0));
+            gui_state(kd, _("High"), GUI_SML, CONF_GEOHI, (g == 1));
+
+            gui_label(jd, _("Geometry"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            gui_state(kd, _("Off"), GUI_SML, CONF_REFOF, (r == 0));
+            gui_state(kd, _("On"),  GUI_SML, CONF_REFON, (r == 1));
+
+            gui_label(jd, _("Reflection"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            gui_state(kd, _("Off"), GUI_SML, CONF_BACOF, (b == 0));
+            gui_state(kd, _("On"),  GUI_SML, CONF_BACON, (b == 1));
+
+            gui_label(jd, _("Background"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            gui_state(kd, _("Off"), GUI_SML, CONF_SHDOF, (h == 0));
+            gui_state(kd, _("On"),  GUI_SML, CONF_SHDON, (h == 1));
+
+            gui_label(jd, _("Shadow"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        gui_space(id);
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            /* A series of empty buttons forms the sound volume control. */
+
+            sound_id[10] = gui_state(kd, NULL, GUI_SML, 110, (s == 10));
+            sound_id[ 9] = gui_state(kd, NULL, GUI_SML, 109, (s ==  9));
+            sound_id[ 8] = gui_state(kd, NULL, GUI_SML, 108, (s ==  8));
+            sound_id[ 7] = gui_state(kd, NULL, GUI_SML, 107, (s ==  7));
+            sound_id[ 6] = gui_state(kd, NULL, GUI_SML, 106, (s ==  6));
+            sound_id[ 5] = gui_state(kd, NULL, GUI_SML, 105, (s ==  5));
+            sound_id[ 4] = gui_state(kd, NULL, GUI_SML, 104, (s ==  4));
+            sound_id[ 3] = gui_state(kd, NULL, GUI_SML, 103, (s ==  3));
+            sound_id[ 2] = gui_state(kd, NULL, GUI_SML, 102, (s ==  2));
+            sound_id[ 1] = gui_state(kd, NULL, GUI_SML, 101, (s ==  1));
+            sound_id[ 0] = gui_state(kd, NULL, GUI_SML, 100, (s ==  0));
+
+            gui_label(jd, _("Sound Volume"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            /* A series of empty buttons forms the music volume control. */
+
+            music_id[10] = gui_state(kd, NULL, GUI_SML, 210, (m == 10));
+            music_id[ 9] = gui_state(kd, NULL, GUI_SML, 209, (m ==  9));
+            music_id[ 8] = gui_state(kd, NULL, GUI_SML, 208, (m ==  8));
+            music_id[ 7] = gui_state(kd, NULL, GUI_SML, 207, (m ==  7));
+            music_id[ 6] = gui_state(kd, NULL, GUI_SML, 206, (m ==  6));
+            music_id[ 5] = gui_state(kd, NULL, GUI_SML, 205, (m ==  5));
+            music_id[ 4] = gui_state(kd, NULL, GUI_SML, 204, (m ==  4));
+            music_id[ 3] = gui_state(kd, NULL, GUI_SML, 203, (m ==  3));
+            music_id[ 2] = gui_state(kd, NULL, GUI_SML, 202, (m ==  2));
+            music_id[ 1] = gui_state(kd, NULL, GUI_SML, 201, (m ==  1));
+            music_id[ 0] = gui_state(kd, NULL, GUI_SML, 200, (m ==  0));
+
+            gui_label(jd, _("Music Volume"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        gui_space(id);
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            name_id = gui_state(kd, " ", GUI_SML, CONF_PLAYER, 0);
+            gui_label(jd, _("Player Name"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        if ((jd = gui_harray(id)) &&
+            (kd = gui_harray(jd)))
+        {
+            ball_id = gui_state(kd, " ", GUI_SML, CONF_BALL, 0);
+            gui_label(jd, _("Ball"), GUI_SML, GUI_ALL, 0, 0);
+        }
+
+        gui_layout(id, 0, 0);
+
+        gui_set_trunc(name_id, TRUNC_TAIL);
+        gui_set_trunc(ball_id, TRUNC_TAIL);
+
+        gui_set_label(name_id, player);
+        gui_set_label(ball_id, base_name(ball, NULL));
     }
 
-    return root_id;
+    audio_music_fade_to(0.5f, "bgm/inter.ogg");
+
+    return id;
 }
 
-static int conf_enter(struct state *st, struct state *prev, int intent)
+static void conf_leave(int id)
 {
-    game_client_free(NULL);
-    conf_common_init(conf_action);
-    return transition_slide(conf_gui(), 1, intent);
+    back_free();
+    gui_delete(id);
 }
 
-static int conf_leave(struct state *st, struct state *next, int id, int intent)
+static void conf_paint(int id, float t)
 {
-    return conf_common_leave(st, next, id, intent);
+    video_push_persp((float) config_get_d(CONFIG_VIEW_FOV), 0.1f, FAR_DIST);
+    {
+        back_draw(0);
+    }
+    video_pop_matrix();
+    gui_paint(id);
 }
+
+static int conf_buttn(int b, int d)
+{
+    if (d)
+    {
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
+            return conf_action(gui_token(gui_click()));
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return conf_action(CONF_BACK);
+    }
+    return 1;
+}
+
 /*---------------------------------------------------------------------------*/
 
-static int null_enter(struct state *st, struct state *prev, int intent)
+static int null_enter(void)
 {
     hud_free();
-    transition_quit();
     gui_free();
-    geom_free();
+    swch_free();
+    jump_free();
+    goal_free();
+    item_free();
     ball_free();
     shad_free();
     part_free();
-    mtrl_free_objects();
 
     return 0;
 }
 
-static int null_leave(struct state *st, struct state *next, int id, int intent)
+static void null_leave(int id)
 {
-    mtrl_load_objects();
-    part_init();
+    int g = config_get_d(CONFIG_GEOMETRY);
+
+    part_init(GOAL_HEIGHT, JUMP_HEIGHT);
     shad_init();
     ball_init();
-    geom_init();
+    item_init();
+    goal_init(g);
+    jump_init(g);
+    swch_init(g);
     gui_init();
-    transition_init();
     hud_init();
-    return 0;
 }
 
 /*---------------------------------------------------------------------------*/
 
- struct state st_conf = {
+struct state st_conf = {
     conf_enter,
     conf_leave,
-    conf_common_paint,
-    common_timer,
-    common_point,
-    common_stick,
+    conf_paint,
+    shared_timer,
+    shared_point,
+    shared_stick,
+    shared_angle,
+    shared_click,
     NULL,
-    common_click,
-    common_keybd,
-    common_buttn
+    conf_buttn,
+    1, 0
 };
 
 struct state st_null = {
@@ -287,5 +453,6 @@ struct state st_null = {
     NULL,
     NULL,
     NULL,
-    NULL
+    NULL,
+    1, 0
 };

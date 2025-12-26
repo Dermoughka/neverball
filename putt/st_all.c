@@ -15,9 +15,9 @@
 #include <math.h>
 
 #include "hud.h"
+#include "back.h"
 #include "geom.h"
 #include "gui.h"
-#include "transition.h"
 #include "vec3.h"
 #include "game.h"
 #include "hole.h"
@@ -25,12 +25,18 @@
 #include "course.h"
 #include "config.h"
 #include "video.h"
-#include "version.h"
-#include "lang.h"
-#include "key.h"
 
 #include "st_all.h"
 #include "st_conf.h"
+
+/*---------------------------------------------------------------------------*/
+
+static SDL_Joystick *joystick = NULL;
+
+void set_joystick(SDL_Joystick *j)
+{
+    joystick = j;
+}
 
 /*---------------------------------------------------------------------------*/
 
@@ -44,15 +50,15 @@ static char *number(int i)
 }
 
 static int score_card(const char  *title,
-                      const GLubyte *c0,
-                      const GLubyte *c1)
+                      const float *c0,
+                      const float *c1)
 {
     int id, jd, kd, ld;
 
-    int p1 = (curr_party() >= 1) ? 1 : 0;
-    int p2 = (curr_party() >= 2) ? 1 : 0;
-    int p3 = (curr_party() >= 3) ? 1 : 0;
-    int p4 = (curr_party() >= 4) ? 1 : 0;
+    int p1 = (curr_party() >= 1) ? 1 : 0, l1 = (curr_party() == 1) ? 1 : 0;
+    int p2 = (curr_party() >= 2) ? 1 : 0, l2 = (curr_party() == 2) ? 1 : 0;
+    int p3 = (curr_party() >= 3) ? 1 : 0, l3 = (curr_party() == 3) ? 1 : 0;
+    int p4 = (curr_party() >= 4) ? 1 : 0, l4 = (curr_party() == 4) ? 1 : 0;
 
     int i;
     int n = curr_count() - 1;
@@ -60,53 +66,40 @@ static int score_card(const char  *title,
 
     if ((id = gui_vstack(0)))
     {
-        gui_label(id, title, GUI_MED, c0, c1);
+        gui_label(id, title, GUI_MED, GUI_ALL, c0, c1);
         gui_space(id);
 
         if ((jd = gui_hstack(id)))
         {
             if ((kd = gui_varray(jd)))
             {
-                if (p1) gui_label(kd, _("O"),      GUI_SML, 0, 0);
-                if (p1) gui_label(kd, hole_out(0), GUI_SML, gui_wht, gui_wht);
-                if (p1) gui_label(kd, hole_out(1), GUI_SML, gui_red, gui_wht);
-                if (p2) gui_label(kd, hole_out(2), GUI_SML, gui_grn, gui_wht);
-                if (p3) gui_label(kd, hole_out(3), GUI_SML, gui_blu, gui_wht);
-                if (p4) gui_label(kd, hole_out(4), GUI_SML, gui_yel, gui_wht);
-
-                gui_set_rect(kd, GUI_RGT);
+                if (p1) gui_label(kd, _("O"),         0, GUI_NE, 0, 0);
+                if (p1) gui_label(kd, hole_out(0), 0, 0,           gui_wht, gui_wht);
+                if (p1) gui_label(kd, hole_out(1), 0, GUI_SE * l1, gui_red, gui_wht);
+                if (p2) gui_label(kd, hole_out(2), 0, GUI_SE * l2, gui_grn, gui_wht);
+                if (p3) gui_label(kd, hole_out(3), 0, GUI_SE * l3, gui_blu, gui_wht);
+                if (p4) gui_label(kd, hole_out(4), 0, GUI_SE * l4, gui_yel, gui_wht);
             }
 
             if ((kd = gui_harray(jd)))
-            {
                 for (i = m; i > 0; i--)
                     if ((ld = gui_varray(kd)))
                     {
-                        if (p1) gui_label(ld, number(i), GUI_SML, 0, 0);
-                        if (p1) gui_label(ld, hole_score(i, 0), GUI_SML, gui_wht, gui_wht);
-                        if (p1) gui_label(ld, hole_score(i, 1), GUI_SML, gui_red, gui_wht);
-                        if (p2) gui_label(ld, hole_score(i, 2), GUI_SML, gui_grn, gui_wht);
-                        if (p3) gui_label(ld, hole_score(i, 3), GUI_SML, gui_blu, gui_wht);
-                        if (p4) gui_label(ld, hole_score(i, 4), GUI_SML, gui_yel, gui_wht);
+                        if (p1) gui_label(ld, number(i), 0, (i == 1) ? GUI_NW : 0, 0, 0);
+                        if (p1) gui_label(ld, hole_score(i, 0), 0, 0, gui_wht, gui_wht);
+                        if (p1) gui_label(ld, hole_score(i, 1), 0, 0, gui_red, gui_wht);
+                        if (p2) gui_label(ld, hole_score(i, 2), 0, 0, gui_grn, gui_wht);
+                        if (p3) gui_label(ld, hole_score(i, 3), 0, 0, gui_blu, gui_wht);
+                        if (p4) gui_label(ld, hole_score(i, 4), 0, 0, gui_yel, gui_wht);
                     }
-
-                gui_set_rect(kd, GUI_LFT);
-            }
-
-            if ((kd = gui_vstack(jd)))
+            if ((kd = gui_varray(jd)))
             {
-                gui_space(kd);
-
-                if ((ld = gui_varray(kd)))
-                {
-                    if (p1) gui_label(ld, _("Par"), GUI_SML, gui_wht, gui_wht);
-                    if (p1) gui_label(ld, _("P1"),  GUI_SML, gui_red, gui_wht);
-                    if (p2) gui_label(ld, _("P2"),  GUI_SML, gui_grn, gui_wht);
-                    if (p3) gui_label(ld, _("P3"),  GUI_SML, gui_blu, gui_wht);
-                    if (p4) gui_label(ld, _("P4"),  GUI_SML, gui_yel, gui_wht);
-
-                    gui_set_rect(ld, GUI_ALL);
-                }
+                gui_filler(kd);
+                if (p1) gui_label(kd, _("Par"), 0, GUI_NW,      gui_wht, gui_wht);
+                if (p1) gui_label(kd, _("P1"),  0, GUI_SW * l1, gui_red, gui_wht);
+                if (p2) gui_label(kd, _("P2"),  0, GUI_SW * l2, gui_grn, gui_wht);
+                if (p3) gui_label(kd, _("P3"),  0, GUI_SW * l3, gui_blu, gui_wht);
+                if (p4) gui_label(kd, _("P4"),  0, GUI_SW * l4, gui_yel, gui_wht);
             }
         }
 
@@ -116,58 +109,41 @@ static int score_card(const char  *title,
         {
             if ((kd = gui_varray(jd)))
             {
-                if (p1) gui_label(kd, _("Tot"),    GUI_SML, 0, 0);
-                if (p1) gui_label(kd, hole_tot(0), GUI_SML, gui_wht, gui_wht);
-                if (p1) gui_label(kd, hole_tot(1), GUI_SML, gui_red, gui_wht);
-                if (p2) gui_label(kd, hole_tot(2), GUI_SML, gui_grn, gui_wht);
-                if (p3) gui_label(kd, hole_tot(3), GUI_SML, gui_blu, gui_wht);
-                if (p4) gui_label(kd, hole_tot(4), GUI_SML, gui_yel, gui_wht);
-
-                gui_set_rect(kd, GUI_ALL);
+                if (p1) gui_label(kd, _("Tot"),    0, GUI_TOP, 0, 0);
+                if (p1) gui_label(kd, hole_tot(0), 0, 0,           gui_wht, gui_wht);
+                if (p1) gui_label(kd, hole_tot(1), 0, GUI_BOT * l1, gui_red, gui_wht);
+                if (p2) gui_label(kd, hole_tot(2), 0, GUI_BOT * l2, gui_grn, gui_wht);
+                if (p3) gui_label(kd, hole_tot(3), 0, GUI_BOT * l3, gui_blu, gui_wht);
+                if (p4) gui_label(kd, hole_tot(4), 0, GUI_BOT * l4, gui_yel, gui_wht);
             }
-
             if ((kd = gui_varray(jd)))
             {
-                if (p1) gui_label(kd, _("I"),     GUI_SML, 0, 0);
-                if (p1) gui_label(kd, hole_in(0), GUI_SML, gui_wht, gui_wht);
-                if (p1) gui_label(kd, hole_in(1), GUI_SML, gui_red, gui_wht);
-                if (p2) gui_label(kd, hole_in(2), GUI_SML, gui_grn, gui_wht);
-                if (p3) gui_label(kd, hole_in(3), GUI_SML, gui_blu, gui_wht);
-                if (p4) gui_label(kd, hole_in(4), GUI_SML, gui_yel, gui_wht);
-
-                gui_set_rect(kd, GUI_RGT);
+                if (p1) gui_label(kd, _("I"),     0, GUI_NE, 0, 0);
+                if (p1) gui_label(kd, hole_in(0), 0, 0,           gui_wht, gui_wht);
+                if (p1) gui_label(kd, hole_in(1), 0, GUI_SE * l1, gui_red, gui_wht);
+                if (p2) gui_label(kd, hole_in(2), 0, GUI_SE * l2, gui_grn, gui_wht);
+                if (p3) gui_label(kd, hole_in(3), 0, GUI_SE * l3, gui_blu, gui_wht);
+                if (p4) gui_label(kd, hole_in(4), 0, GUI_SE * l4, gui_yel, gui_wht);
             }
-
             if ((kd = gui_harray(jd)))
-            {
                 for (i = n; i > m; i--)
                     if ((ld = gui_varray(kd)))
                     {
-                        if (p1) gui_label(ld, number(i), GUI_SML, 0, 0);
-                        if (p1) gui_label(ld, hole_score(i, 0), GUI_SML, gui_wht, gui_wht);
-                        if (p1) gui_label(ld, hole_score(i, 1), GUI_SML, gui_red, gui_wht);
-                        if (p2) gui_label(ld, hole_score(i, 2), GUI_SML, gui_grn, gui_wht);
-                        if (p3) gui_label(ld, hole_score(i, 3), GUI_SML, gui_blu, gui_wht);
-                        if (p4) gui_label(ld, hole_score(i, 4), GUI_SML, gui_yel, gui_wht);
+                        if (p1) gui_label(ld, number(i), 0, (i == m+1) ? GUI_NW : 0, 0, 0);
+                        if (p1) gui_label(ld, hole_score(i, 0), 0, 0, gui_wht, gui_wht);
+                        if (p1) gui_label(ld, hole_score(i, 1), 0, 0, gui_red, gui_wht);
+                        if (p2) gui_label(ld, hole_score(i, 2), 0, 0, gui_grn, gui_wht);
+                        if (p3) gui_label(ld, hole_score(i, 3), 0, 0, gui_blu, gui_wht);
+                        if (p4) gui_label(ld, hole_score(i, 4), 0, 0, gui_yel, gui_wht);
                     }
-
-                gui_set_rect(kd, GUI_LFT);
-            }
-
-            if ((kd = gui_vstack(jd)))
+            if ((kd = gui_varray(jd)))
             {
-                gui_space(kd);
-
-                if ((ld = gui_varray(kd)))
-                {
-                    if (p1) gui_label(ld, _("Par"), GUI_SML, gui_wht, gui_wht);
-                    if (p1) gui_label(ld, _("P1"),  GUI_SML, gui_red, gui_wht);
-                    if (p2) gui_label(ld, _("P2"),  GUI_SML, gui_grn, gui_wht);
-                    if (p3) gui_label(ld, _("P3"),  GUI_SML, gui_blu, gui_wht);
-                    if (p4) gui_label(ld, _("P4"),  GUI_SML, gui_yel, gui_wht);
-
-                    gui_set_rect(ld, GUI_ALL);
-                }
+                gui_filler(kd);
+                if (p1) gui_label(kd, _("Par"), 0, GUI_NW,      gui_wht, gui_wht);
+                if (p1) gui_label(kd, _("P1"),  0, GUI_SW * l1, gui_red, gui_wht);
+                if (p2) gui_label(kd, _("P2"),  0, GUI_SW * l2, gui_grn, gui_wht);
+                if (p3) gui_label(kd, _("P3"),  0, GUI_SW * l3, gui_blu, gui_wht);
+                if (p4) gui_label(kd, _("P4"),  0, GUI_SW * l4, gui_yel, gui_wht);
             }
         }
 
@@ -179,19 +155,24 @@ static int score_card(const char  *title,
 
 /*---------------------------------------------------------------------------*/
 
-static int shared_stick_basic(int id, int a, float v, int bump)
+static int shared_stick_basic(int id, int a, int v)
 {
-    int jd;
+    int jd = 0;
 
-    if ((jd = gui_stick(id, a, v, bump)))
+    if (config_tst_d(CONFIG_JOYSTICK_AXIS_X, a))
+        jd = gui_stick(id, v, 0);
+    else if (config_tst_d(CONFIG_JOYSTICK_AXIS_Y, a))
+        jd = gui_stick(id, 0, v);
+
+    if (jd)
         gui_pulse(jd, 1.2f);
 
     return jd;
 }
 
-static void shared_stick(int id, int a, float v, int bump)
+static void shared_stick(int id, int a, int v)
 {
-    shared_stick_basic(id, a, v, bump);
+    shared_stick_basic(id, a, v);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -213,63 +194,42 @@ static int title_action(int i)
     return 1;
 }
 
-static int title_enter(struct state *st, struct state *prev, int intent)
+static int title_enter(void)
 {
     int id, jd, kd;
-    int root_id;
 
     /* Build the title GUI. */
 
-    if ((root_id = gui_root()))
+    if ((id = gui_vstack(0)))
     {
-        if ((id = gui_vstack(root_id)))
-        {
-            gui_label(id, "Neverputt", GUI_LRG, 0, 0);
-            gui_space(id);
+        gui_label(id, "Neverputt", GUI_LRG, GUI_ALL, 0, 0);
+        gui_space(id);
 
-            if ((jd = gui_harray(id)))
+        if ((jd = gui_harray(id)))
+        {
+            gui_filler(jd);
+
+            if ((kd = gui_varray(jd)))
             {
-                gui_filler(jd);
-
-                if ((kd = gui_varray(jd)))
-                {
-                    gui_start(kd, gt_prefix("menu^Play"),    GUI_MED, TITLE_PLAY, 1);
-                    gui_state(kd, gt_prefix("menu^Options"), GUI_MED, TITLE_CONF, 0);
-                    gui_state(kd, gt_prefix("menu^Exit"),    GUI_MED, TITLE_EXIT, 0);
-                }
-
-                gui_filler(jd);
+                gui_start(kd, sgettext("menu^Play"),    GUI_MED, TITLE_PLAY, 1);
+                gui_state(kd, sgettext("menu^Options"), GUI_MED, TITLE_CONF, 0);
+                gui_state(kd, sgettext("menu^Exit"),    GUI_MED, TITLE_EXIT, 0);
             }
-            gui_layout(id, 0, 0);
-        }
 
-#if ENABLE_VERSION
-        if ((id = gui_label(root_id, "Neverputt " VERSION, GUI_TNY, gui_wht2, gui_wht2)))
-        {
-            gui_clr_rect(id);
-            gui_layout(id, -1, -1);
+            gui_filler(jd);
         }
-#endif
+        gui_layout(id, 0, 0);
     }
 
     course_init();
     course_rand();
 
-    return transition_slide(root_id, 1, intent);
+    return id;
 }
 
-static int title_leave(struct state *st, struct state *next, int id, int intent)
+static void title_leave(int id)
 {
-    if (next == &st_conf)
-    {
-        /*
-         * This is ugly, but better than stupidly deleting stuff using
-         * object names from a previous GL context.
-         */
-        course_free();
-    }
-
-    return transition_slide(id, 0, intent);
+    gui_delete(id);
 }
 
 static void title_paint(int id, float t)
@@ -295,7 +255,7 @@ static void title_point(int id, int x, int y, int dx, int dy)
 
 static int title_click(int b, int d)
 {
-    return gui_click(b, d) ? title_action(gui_token(gui_active())) : 1;
+    return d && b == SDL_BUTTON_LEFT ? title_action(gui_token(gui_click())) : 1;
 }
 
 static int title_buttn(int b, int d)
@@ -303,8 +263,8 @@ static int title_buttn(int b, int d)
     if (d)
     {
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
-            return title_action(gui_token(gui_active()));
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
+            return title_action(gui_token(gui_click()));
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
             return title_action(TITLE_EXIT);
     }
     return 1;
@@ -319,53 +279,28 @@ static int shot_id;
 
 static int course_action(int i)
 {
-    audio_play(AUD_MENU, 1.0f);
-
     if (course_exists(i))
     {
         course_goto(i);
         goto_state(&st_party);
     }
     if (i == COURSE_BACK)
-        exit_state(&st_title);
+        goto_state(&st_title);
 
     return 1;
 }
 
-static int comp_size(int n, int s)
+static int course_enter(void)
 {
-    return n <= s * s ? s : comp_size(n, s + 1);
-}
+    int w = config_get_d(CONFIG_WIDTH);
+    int h = config_get_d(CONFIG_HEIGHT);
 
-static int comp_cols(int n)
-{
-    return comp_size(n, 1);
-}
-
-static int comp_rows(int n)
-{
-    int s = comp_size(n, 1);
-
-    return n <= s * (s - 1) ? s - 1 : s;
-}
-
-static int course_enter(struct state *st, struct state *prev, int intent)
-{
-    int w = video.device_w;
-    int h = video.device_h;
-
-    int id, jd, kd, ld, md;
-
-    int i, j, r, c, n;
-
-    n = course_count();
-
-    r = comp_rows(n);
-    c = comp_cols(n);
+    int id, jd, kd, ld, md, i = 0, j, n = course_count();
+    int m = (int)(sqrt(n/2.0)*2);
 
     if ((id = gui_vstack(0)))
     {
-        gui_label(id, _("Select Course"), GUI_MED, 0, 0);
+        gui_label(id, _("Select Course"), GUI_MED, GUI_ALL, 0, 0);
         gui_space(id);
 
         if ((jd = gui_hstack(id)))
@@ -376,21 +311,19 @@ static int course_enter(struct state *st, struct state *prev, int intent)
 
             if ((kd = gui_varray(jd)))
             {
-                for(i = 0; i < r; i++)
+                for(i = 0; i < n; i += m)
                 {
                     if ((ld = gui_harray(kd)))
                     {
-                        for (j = c - 1; j >= 0; j--)
+                        for (j = (m - 1); j >= 0; j--)
                         {
-                            int k = i * c + j;
-
-                            if (k < n)
+                            if (i + j < n)
                             {
-                                md = gui_image(ld, course_shot(k),
-                                               w / 3 / c, h / 3 / r);
-                                gui_set_state(md, k, 0);
+                                md = gui_image(ld, course_shot(i + j),
+                                               w / 3 / m, h / 3 / m);
+                                gui_active(md, i + j, 0);
 
-                                if (k == 0)
+                                if (i + j == 0)
                                     gui_focus(md);
                             }
                             else
@@ -402,7 +335,7 @@ static int course_enter(struct state *st, struct state *prev, int intent)
         }
 
         gui_space(id);
-        desc_id = gui_multi(id, _(course_desc(0)), GUI_SML, gui_yel, gui_wht);
+        desc_id = gui_multi(id, _(course_desc(0)), GUI_SML, GUI_ALL, gui_yel, gui_wht);
         gui_space(id);
 
         if ((jd = gui_hstack(id)))
@@ -416,12 +349,12 @@ static int course_enter(struct state *st, struct state *prev, int intent)
 
     audio_music_fade_to(0.5f, "bgm/inter.ogg");
 
-    return transition_slide(id, 1, intent);
+    return id;
 }
 
-static int course_leave(struct state *st, struct state *next, int id, int intent)
+static void course_leave(int id)
 {
-    return transition_slide(id, 0, intent);
+    gui_delete(id);
 }
 
 static void course_paint(int id, float t)
@@ -452,11 +385,11 @@ static void course_point(int id, int x, int y, int dx, int dy)
     }
 }
 
-static void course_stick(int id, int a, float v, int bump)
+static void course_stick(int id, int a, int v)
 {
     int jd;
 
-    if ((jd = shared_stick_basic(id, a, v, bump)))
+    if ((jd = shared_stick_basic(id, a, v)))
     {
         int i = gui_token(jd);
 
@@ -471,7 +404,7 @@ static void course_stick(int id, int a, float v, int bump)
 
 static int course_click(int b, int d)
 {
-    return gui_click(b, d) ? course_action(gui_token(gui_active())) : 1;
+    return d && b == SDL_BUTTON_LEFT ? course_action(gui_token(gui_click())) : 1;
 }
 
 static int course_buttn(int b, int d)
@@ -479,8 +412,8 @@ static int course_buttn(int b, int d)
     if (d)
     {
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
-            return course_action(gui_token(gui_active()));
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
+            return course_action(gui_token(gui_click()));
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
             return course_action(COURSE_BACK);
     }
     return 1;
@@ -501,39 +434,39 @@ static int party_action(int i)
     {
     case PARTY_1:
         audio_play(AUD_MENU, 1.f);
-        if (hole_goto(1, 1))
-            goto_state(&st_next);
+        hole_goto(1, 1);
+        goto_state(&st_next);
         break;
     case PARTY_2:
         audio_play(AUD_MENU, 1.f);
-        if (hole_goto(1, 2))
-            goto_state(&st_next);
+        hole_goto(1, 2);
+        goto_state(&st_next);
         break;
     case PARTY_3:
         audio_play(AUD_MENU, 1.f);
-        if (hole_goto(1, 3))
-            goto_state(&st_next);
+        hole_goto(1, 3);
+        goto_state(&st_next);
         break;
     case PARTY_4:
         audio_play(AUD_MENU, 1.f);
-        if (hole_goto(1, 4))
-            goto_state(&st_next);
+        hole_goto(1, 4);
+        goto_state(&st_next);
         break;
     case PARTY_B:
         audio_play(AUD_MENU, 1.f);
-        exit_state(&st_course);
+        goto_state(&st_course);
         break;
     }
     return 1;
 }
 
-static int party_enter(struct state *st, struct state *prev, int intent)
+static int party_enter(void)
 {
     int id, jd;
 
     if ((id = gui_vstack(0)))
     {
-        gui_label(id, _("Players?"), GUI_MED, 0, 0);
+        gui_label(id, _("Players?"), GUI_MED, GUI_ALL, 0, 0);
         gui_space(id);
 
         if ((jd = gui_harray(id)))
@@ -562,12 +495,12 @@ static int party_enter(struct state *st, struct state *prev, int intent)
         gui_layout(id, 0, 0);
     }
 
-    return transition_slide(id, 1, intent);
+    return id;
 }
 
-static int party_leave(struct state *st, struct state *next, int id, int intent)
+static void party_leave(int id)
 {
-    return transition_slide(id, 0, intent);
+    gui_delete(id);
 }
 
 static void party_paint(int id, float t)
@@ -588,7 +521,7 @@ static void party_point(int id, int x, int y, int dx, int dy)
 
 static int party_click(int b, int d)
 {
-    return gui_click(b, d) ? party_action(gui_token(gui_active())) : 1;
+    return d && b == SDL_BUTTON_LEFT ? party_action(gui_token(gui_click())) : 1;
 }
 
 static int party_buttn(int b, int d)
@@ -596,8 +529,8 @@ static int party_buttn(int b, int d)
     if (d)
     {
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
-            return party_action(gui_token(gui_active()));
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
+            return party_action(gui_token(gui_click()));
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
             return party_action(PARTY_B);
     }
     return 1;
@@ -613,10 +546,13 @@ static struct state *st_quit;
 #define PAUSE_CONTINUE 1
 #define PAUSE_QUIT     2
 
-int goto_pause(struct state *s)
+int goto_pause(struct state *s, int e)
 {
     if (curr_state() == &st_pause)
         return 1;
+
+    if (e && !config_tst_d(CONFIG_KEY_PAUSE, SDLK_ESCAPE))
+        return goto_state(s);
 
     st_continue = curr_state();
     st_quit = s;
@@ -640,7 +576,7 @@ static int pause_action(int i)
     return 1;
 }
 
-static int pause_enter(struct state *st, struct state *prev, int intent)
+static int pause_enter(void)
 {
     int id, jd, td;
 
@@ -648,7 +584,7 @@ static int pause_enter(struct state *st, struct state *prev, int intent)
 
     if ((id = gui_vstack(0)))
     {
-        td = gui_label(id, _("Paused"), GUI_LRG, 0, 0);
+        td = gui_label(id, _("Paused"), GUI_LRG, GUI_ALL, 0, 0);
         gui_space(id);
 
         if ((jd = gui_harray(id)))
@@ -662,14 +598,14 @@ static int pause_enter(struct state *st, struct state *prev, int intent)
     }
 
     hud_init();
-    return transition_slide(id, 1, intent);
+    return id;
 }
 
-static int pause_leave(struct state *st, struct state *next, int id, int intent)
+static void pause_leave(int id)
 {
+    gui_delete(id);
     hud_free();
     audio_music_fade_in(0.5f);
-    return transition_slide(id, 0, intent);
 }
 
 static void pause_paint(int id, float t)
@@ -691,12 +627,12 @@ static void pause_point(int id, int x, int y, int dx, int dy)
 
 static int pause_click(int b, int d)
 {
-    return gui_click(b, d) ? pause_action(gui_token(gui_active())) : 1;
+    return d && b == SDL_BUTTON_LEFT ? pause_action(gui_token(gui_click())) : 1;
 }
 
 static int pause_keybd(int c, int d)
 {
-    if (d && c == KEY_EXIT)
+    if (d && config_tst_d(CONFIG_KEY_PAUSE, c))
         return pause_action(PAUSE_CONTINUE);
     return 1;
 }
@@ -706,9 +642,8 @@ static int pause_buttn(int b, int d)
     if (d)
     {
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
-            return pause_action(gui_token(gui_active()));
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b) ||
-            config_tst_d(CONFIG_JOYSTICK_BUTTON_START, b))
+            return pause_action(gui_token(gui_click()));
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
             return pause_action(PAUSE_CONTINUE);
     }
     return 1;
@@ -720,8 +655,8 @@ static int shared_keybd(int c, int d)
 {
     if (d)
     {
-        if (c == KEY_EXIT)
-            return goto_pause(&st_over);
+        if (config_tst_d(CONFIG_KEY_PAUSE, c))
+            return goto_pause(&st_over, 0);
     }
     return 1;
 }
@@ -730,43 +665,38 @@ static int shared_keybd(int c, int d)
 
 static int num = 0;
 
-static int next_enter(struct state *st, struct state *prev, int intent)
+static int next_enter(void)
 {
-    int id, jd;
+    int id;
     char str[MAXSTR];
 
     sprintf(str, _("Hole %02d"), curr_hole());
 
     if ((id = gui_vstack(0)))
     {
-        gui_label(id, str, GUI_MED, 0, 0);
+        gui_label(id, str, GUI_MED, GUI_ALL, 0, 0);
         gui_space(id);
 
-        if ((jd = gui_vstack(id)))
+        gui_label(id, _("Player"), GUI_SML, GUI_TOP, 0, 0);
+
+        switch (curr_player())
         {
-            gui_label(jd, _("Player"), GUI_SML, 0, 0);
-
-            switch (curr_player())
-            {
-            case 1:
-                gui_label(jd, "1", GUI_LRG, gui_red, gui_wht);
-                if (curr_party() > 1) audio_play(AUD_PLAYER1, 1.f);
-                break;
-            case 2:
-                gui_label(jd, "2", GUI_LRG, gui_grn, gui_wht);
-                if (curr_party() > 1) audio_play(AUD_PLAYER2, 1.f);
-                break;
-            case 3:
-                gui_label(jd, "3", GUI_LRG, gui_blu, gui_wht);
-                if (curr_party() > 1) audio_play(AUD_PLAYER3, 1.f);
-                break;
-            case 4:
-                gui_label(jd, "4", GUI_LRG, gui_yel, gui_wht);
-                if (curr_party() > 1) audio_play(AUD_PLAYER4, 1.f);
-                break;
-            }
-
-            gui_set_rect(jd, GUI_ALL);
+        case 1:
+            gui_label(id, "1", GUI_LRG, GUI_BOT, gui_red, gui_wht);
+            if (curr_party() > 1) audio_play(AUD_PLAYER1, 1.f);
+            break;
+        case 2:
+            gui_label(id, "2", GUI_LRG, GUI_BOT, gui_grn, gui_wht);
+            if (curr_party() > 1) audio_play(AUD_PLAYER2, 1.f);
+            break;
+        case 3:
+            gui_label(id, "3", GUI_LRG, GUI_BOT, gui_blu, gui_wht);
+            if (curr_party() > 1) audio_play(AUD_PLAYER3, 1.f);
+            break;
+        case 4:
+            gui_label(id, "4", GUI_LRG, GUI_BOT, gui_yel, gui_wht);
+            if (curr_party() > 1) audio_play(AUD_PLAYER4, 1.f);
+            break;
         }
         gui_layout(id, 0, 0);
     }
@@ -777,13 +707,13 @@ static int next_enter(struct state *st, struct state *prev, int intent)
     if (paused)
         paused = 0;
 
-    return transition_slide(id, 1, intent);
+    return id;
 }
 
-static int next_leave(struct state *st, struct state *next, int id, int intent)
+static void next_leave(int id)
 {
     hud_free();
-    return transition_slide(id, 0, intent);
+    gui_delete(id);
 }
 
 static void next_paint(int id, float t)
@@ -812,10 +742,10 @@ static int next_keybd(int c, int d)
 {
     if (d)
     {
-        if (c == KEY_POSE)
+        if (c == SDLK_F12)
             return goto_state(&st_poser);
-        if (c == KEY_EXIT)
-            return goto_pause(&st_over);
+        if (config_tst_d(CONFIG_KEY_PAUSE, c))
+            return goto_pause(&st_over, 0);
         if ('0' <= c && c <= '9')
             num = num * 10 + c - '0';
     }
@@ -830,28 +760,21 @@ static int next_buttn(int b, int d)
         {
             if (num > 0)
             {
-                if (hole_goto(num, -1))
-                {
-                    num = 0;
-                    return goto_state(&st_next);
-                }
-                else
-                {
-                    num = 0;
-                    return 1;
-                }
+                hole_goto(num, -1);
+                num = 0;
+                return goto_state(&st_next);
             }
             return goto_state(&st_flyby);
         }
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return goto_pause(&st_over);
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return goto_pause(&st_over, 1);
     }
     return 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
-static int poser_enter(struct state *st, struct state *prev, int intent)
+static int poser_enter(void)
 {
     game_set_fly(-1.f);
     return 0;
@@ -868,7 +791,7 @@ static int poser_buttn(int b, int d)
     {
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
             return goto_state(&st_next);
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
             return goto_state(&st_next);
     }
     return 1;
@@ -876,10 +799,8 @@ static int poser_buttn(int b, int d)
 
 /*---------------------------------------------------------------------------*/
 
-static int flyby_enter(struct state *st, struct state *prev, int intent)
+static int flyby_enter(void)
 {
-    video_hide_cursor();
-
     if (paused)
         paused = 0;
     else
@@ -888,11 +809,9 @@ static int flyby_enter(struct state *st, struct state *prev, int intent)
     return 0;
 }
 
-static int flyby_leave(struct state *st, struct state *next, int id, int intent)
+static void flyby_leave(int id)
 {
-    video_show_cursor();
     hud_free();
-    return 0;
 }
 
 static void flyby_paint(int id, float t)
@@ -932,9 +851,8 @@ static int flyby_buttn(int b, int d)
             game_set_fly(0.f);
             return goto_state(&st_stroke);
         }
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b) ||
-            config_tst_d(CONFIG_JOYSTICK_BUTTON_START, b))
-            return goto_pause(&st_over);
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return goto_pause(&st_over, 1);
     }
     return 1;
 }
@@ -942,15 +860,14 @@ static int flyby_buttn(int b, int d)
 /*---------------------------------------------------------------------------*/
 
 static int stroke_rotate = 0;
-static int stroke_rotate_alt = 0;
-static int stroke_mag = 0;
+static int stroke_mag    = 0;
 
-static int stroke_enter(struct state *st, struct state *prev, int intent)
+static int stroke_enter(void)
 {
     hud_init();
     game_clr_mag();
     config_set_d(CONFIG_CAMERA, 2);
-    video_set_grab(1);
+    video_set_grab(!paused);
 
     if (paused)
         paused = 0;
@@ -958,14 +875,11 @@ static int stroke_enter(struct state *st, struct state *prev, int intent)
     return 0;
 }
 
-static int stroke_leave(struct state *st, struct state *next, int id, int intent)
+static void stroke_leave(int id)
 {
     hud_free();
     video_clr_grab();
     config_set_d(CONFIG_CAMERA, 0);
-    stroke_rotate = 0.0f;
-    stroke_mag = 0.0f;
-    return 0;
 }
 
 static void stroke_paint(int id, float t)
@@ -980,7 +894,9 @@ static void stroke_timer(int id, float dt)
 
     float k;
 
-    if (SDL_GetModState() & KMOD_SHIFT || stroke_rotate_alt)
+    if (SDL_GetModState() & KMOD_SHIFT ||
+        (joystick && SDL_JoystickGetButton(joystick,
+                                           config_get_d(CONFIG_JOYSTICK_BUTTON_B))))
         k = 0.25;
     else
         k = 1.0;
@@ -998,12 +914,15 @@ static void stroke_point(int id, int x, int y, int dx, int dy)
     game_set_mag(dy);
 }
 
-static void stroke_stick(int id, int a, float v, int bump)
+static void stroke_stick(int id, int a, int v)
 {
-    if      (config_tst_d(CONFIG_JOYSTICK_AXIS_X0, a))
-        stroke_rotate = 6 * v;
-    else if (config_tst_d(CONFIG_JOYSTICK_AXIS_Y0, a))
-        stroke_mag = -6 * v;
+    if (v == 1) /* See 'loop' in main.c */
+        v = 0;
+
+    if (config_tst_d(CONFIG_JOYSTICK_AXIS_X, a))
+        stroke_rotate = (6 * v) / JOY_MAX;
+    else if (config_tst_d(CONFIG_JOYSTICK_AXIS_Y, a))
+        stroke_mag = -((6 * v) / JOY_MAX);
 }
 
 static int stroke_click(int b, int d)
@@ -1015,26 +934,18 @@ static int stroke_buttn(int b, int d)
 {
     if (d)
     {
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_X, b))
-            stroke_rotate_alt = 1;
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
             return goto_state(&st_roll);
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_START, b))
-            return goto_pause(&st_over);
-    }
-    else
-    {
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_X, b))
-            stroke_rotate_alt = 0;
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return goto_pause(&st_over, 1);
     }
     return 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
-static int roll_enter(struct state *st, struct state *prev, int intent)
+static int roll_enter(void)
 {
-    video_hide_cursor();
     hud_init();
 
     if (paused)
@@ -1045,11 +956,9 @@ static int roll_enter(struct state *st, struct state *prev, int intent)
     return 0;
 }
 
-static int roll_leave(struct state *st, struct state *next, int id, int intent)
+static void roll_leave(int id)
 {
-    video_show_cursor();
     hud_free();
-    return 0;
 }
 
 static void roll_paint(int id, float t)
@@ -1074,20 +983,19 @@ static int roll_buttn(int b, int d)
 {
     if (d)
     {
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b) ||
-            config_tst_d(CONFIG_JOYSTICK_BUTTON_START, b))
-            return goto_pause(&st_over);
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return goto_pause(&st_over, 1);
     }
     return 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
-static int goal_enter(struct state *st, struct state *prev, int intent)
+static int goal_enter(void)
 {
     int id;
 
-    if ((id = gui_label(0, _("It's In!"), GUI_MED, gui_grn, gui_grn)))
+    if ((id = gui_label(0, _("It's In!"), GUI_MED, GUI_ALL, gui_grn, gui_grn)))
         gui_layout(id, 0, 0);
 
     if (paused)
@@ -1097,13 +1005,13 @@ static int goal_enter(struct state *st, struct state *prev, int intent)
 
     hud_init();
 
-    return transition_slide(id, 1, intent);
+    return id;
 }
 
-static int goal_leave(struct state *st, struct state *next, int id, int intent)
+static void goal_leave(int id)
 {
+    gui_delete(id);
     hud_free();
-    return transition_slide(id, 0, intent);
 }
 
 static void goal_paint(int id, float t)
@@ -1115,8 +1023,6 @@ static void goal_paint(int id, float t)
 
 static void goal_timer(int id, float dt)
 {
-    gui_timer(id, dt);
-
     if (time_state() > 3)
     {
         if (hole_next())
@@ -1149,15 +1055,15 @@ static int goal_buttn(int b, int d)
             else
                 goto_state(&st_score);
         }
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return goto_pause(&st_over);
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return goto_pause(&st_over, 1);
     }
     return 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
-static int stop_enter(struct state *st, struct state *prev, int intent)
+static int stop_enter(void)
 {
     if (paused)
         paused = 0;
@@ -1169,10 +1075,9 @@ static int stop_enter(struct state *st, struct state *prev, int intent)
     return 0;
 }
 
-static int stop_leave(struct state *st, struct state *next, int id, int intent)
+static void stop_leave(int id)
 {
     hud_free();
-    return 0;
 }
 
 static void stop_paint(int id, float t)
@@ -1220,20 +1125,19 @@ static int stop_buttn(int b, int d)
             else
                 goto_state(&st_score);
         }
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b) ||
-            config_tst_d(CONFIG_JOYSTICK_BUTTON_START, b))
-            return goto_pause(&st_over);
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return goto_pause(&st_over, 1);
     }
     return 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
-static int fall_enter(struct state *st, struct state *prev, int intent)
+static int fall_enter(void)
 {
     int id;
 
-    if ((id = gui_label(0, _("1 Stroke Penalty"), GUI_MED, gui_blk, gui_red)))
+    if ((id = gui_label(0, _("1 Stroke Penalty"), GUI_MED, GUI_ALL, gui_blk, gui_red)))
         gui_layout(id, 0, 0);
 
     if (paused)
@@ -1246,13 +1150,13 @@ static int fall_enter(struct state *st, struct state *prev, int intent)
 
     hud_init();
 
-    return transition_slide(id, 1, intent);
+    return id;
 }
 
-static int fall_leave(struct state *st, struct state *next, int id, int intent)
+static void fall_leave(int id)
 {
+    gui_delete(id);
     hud_free();
-    return transition_slide(id, 0, intent);
 }
 
 static void fall_paint(int id, float t)
@@ -1264,8 +1168,6 @@ static void fall_paint(int id, float t)
 
 static void fall_timer(int id, float dt)
 {
-    gui_timer(id, dt);
-
     if (time_state() > 3)
     {
         if (hole_next())
@@ -1298,27 +1200,27 @@ static int fall_buttn(int b, int d)
             else
                 goto_state(&st_score);
         }
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return goto_pause(&st_over);
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return goto_pause(&st_over, 1);
     }
     return 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
-static int score_enter(struct state *st, struct state *prev, int intent)
+static int score_enter(void)
 {
     audio_music_fade_out(2.f);
 
     if (paused)
         paused = 0;
 
-    return transition_slide(score_card(_("Scores"), gui_yel, gui_red), 1, intent);
+    return score_card(_("Scores"), gui_yel, gui_red);
 }
 
-static int score_leave(struct state *st, struct state *next, int id, int intent)
+static void score_leave(int id)
 {
-    return transition_slide(id, 0, intent);
+    gui_delete(id);
 }
 
 static void score_paint(int id, float t)
@@ -1353,25 +1255,25 @@ static int score_buttn(int b, int d)
             if (hole_move())
                 goto_state(&st_next);
             else
-                goto_state(&st_title);
+                goto_state(&st_score);
         }
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return goto_pause(&st_over);
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return goto_pause(&st_over, 1);
     }
     return 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
-static int over_enter(struct state *st, struct state *prev, int intent)
+static int over_enter(void)
 {
     audio_music_fade_out(2.f);
-    return transition_slide(score_card(_("Final Scores"), gui_yel, gui_red), 1, intent);
+    return score_card(_("Final Scores"), gui_yel, gui_red);
 }
 
-static int over_leave(struct state *st, struct state *next, int id, int intent)
+static void over_leave(int id)
 {
-    return transition_slide(id, 0, intent);
+    gui_delete(id);
 }
 
 static void over_paint(int id, float t)
@@ -1396,7 +1298,7 @@ static int over_buttn(int b, int d)
     {
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
             return goto_state(&st_title);
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
             return goto_state(&st_title);
     }
     return 1;
@@ -1414,7 +1316,8 @@ struct state st_title = {
     NULL,
     title_click,
     NULL,
-    title_buttn
+    title_buttn,
+    1, 0
 };
 
 struct state st_course = {
@@ -1427,7 +1330,8 @@ struct state st_course = {
     NULL,
     course_click,
     NULL,
-    course_buttn
+    course_buttn,
+    1, 0
 };
 
 struct state st_party = {
@@ -1440,7 +1344,8 @@ struct state st_party = {
     NULL,
     party_click,
     NULL,
-    party_buttn
+    party_buttn,
+    1, 0
 };
 
 struct state st_next = {
@@ -1453,7 +1358,8 @@ struct state st_next = {
     NULL,
     next_click,
     next_keybd,
-    next_buttn
+    next_buttn,
+    1, 0
 };
 
 struct state st_poser = {
@@ -1466,7 +1372,8 @@ struct state st_poser = {
     NULL,
     NULL,
     NULL,
-    poser_buttn
+    poser_buttn,
+    1, 0
 };
 
 struct state st_flyby = {
@@ -1479,7 +1386,8 @@ struct state st_flyby = {
     NULL,
     flyby_click,
     shared_keybd,
-    flyby_buttn
+    flyby_buttn,
+    1, 0
 };
 
 struct state st_stroke = {
@@ -1492,7 +1400,8 @@ struct state st_stroke = {
     NULL,
     stroke_click,
     shared_keybd,
-    stroke_buttn
+    stroke_buttn,
+    0, 0
 };
 
 struct state st_roll = {
@@ -1505,7 +1414,8 @@ struct state st_roll = {
     NULL,
     NULL,
     shared_keybd,
-    roll_buttn
+    roll_buttn,
+    0, 0
 };
 
 struct state st_goal = {
@@ -1518,7 +1428,8 @@ struct state st_goal = {
     NULL,
     goal_click,
     shared_keybd,
-    goal_buttn
+    goal_buttn,
+    0, 0
 };
 
 struct state st_stop = {
@@ -1531,7 +1442,8 @@ struct state st_stop = {
     NULL,
     stop_click,
     shared_keybd,
-    stop_buttn
+    stop_buttn,
+    0, 0
 };
 
 struct state st_fall = {
@@ -1544,7 +1456,8 @@ struct state st_fall = {
     NULL,
     fall_click,
     shared_keybd,
-    fall_buttn
+    fall_buttn,
+    0, 0
 };
 
 struct state st_score = {
@@ -1557,7 +1470,8 @@ struct state st_score = {
     NULL,
     score_click,
     shared_keybd,
-    score_buttn
+    score_buttn,
+    0, 0
 };
 
 struct state st_over = {
@@ -1570,7 +1484,8 @@ struct state st_over = {
     NULL,
     over_click,
     NULL,
-    over_buttn
+    over_buttn,
+    1, 0
 };
 
 struct state st_pause = {
@@ -1583,5 +1498,6 @@ struct state st_pause = {
     NULL,
     pause_click,
     pause_keybd,
-    pause_buttn
+    pause_buttn,
+    1, 0
 };

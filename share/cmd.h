@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 Neverball authors
+ * Copyright (C) 2009 Neverball contributors
  *
  * NEVERBALL is  free software; you can redistribute  it and/or modify
  * it under the  terms of the GNU General  Public License as published
@@ -20,8 +20,10 @@
  * apply to command addition, removal, and modification:
  *
  * - New commands are added at the bottom of the list.
+ *
  * - Existing commands are never modified nor removed.
- * - The list is never reordered.  (It's tempting.)
+ *
+ * - The list is never reordered.  (It's tempting...)
  *
  * However, commands can be renamed (e.g., to add a "deprecated" tag,
  * because it's superseded by another command).
@@ -42,8 +44,8 @@ enum cmd_type
     CMD_COINS,
     CMD_JUMP_ENTER,
     CMD_JUMP_EXIT,
-    CMD_BODY_PATH, /* Use CMD_MOVE_PATH instead. */
-    CMD_BODY_TIME, /* Use CMD_MOVE_TIME instead. */
+    CMD_BODY_PATH,
+    CMD_BODY_TIME,
     CMD_GOAL_OPEN,
     CMD_SWCH_ENTER,
     CMD_SWCH_TOGGLE,
@@ -63,8 +65,6 @@ enum cmd_type
     CMD_STEP_SIMULATION,
     CMD_MAP,
     CMD_TILT_AXES,
-    CMD_MOVE_PATH,
-    CMD_MOVE_TIME,
 
     CMD_MAX
 };
@@ -76,22 +76,22 @@ enum cmd_type
  * (handy when adding new commands).
  */
 
-#define CMD_HEADER \
+#define HEADER                                  \
     enum cmd_type type
 
 struct cmd_end_of_update
 {
-    CMD_HEADER;
+    HEADER;
 };
 
 struct cmd_make_ball
 {
-    CMD_HEADER;
+    HEADER;
 };
 
 struct cmd_make_item
 {
-    CMD_HEADER;
+    HEADER;
     float p[3];
     int   t;
     int   n;
@@ -99,173 +99,169 @@ struct cmd_make_item
 
 struct cmd_pick_item
 {
-    CMD_HEADER;
+    HEADER;
     int   hi;
 };
 
 struct cmd_tilt_angles
 {
-    CMD_HEADER;
+    HEADER;
     float x;
     float z;
 };
 
 struct cmd_sound
 {
-    CMD_HEADER;
-    /* FIXME: this should have been an integer. */
+    HEADER;
     char  *n;
     float  a;
 };
 
 struct cmd_timer
 {
-    CMD_HEADER;
+    HEADER;
     float t;
 };
 
 struct cmd_status
 {
-    CMD_HEADER;
+    HEADER;
     int t;
 };
 
 struct cmd_coins
 {
-    CMD_HEADER;
+    HEADER;
     int n;
 };
 
 struct cmd_jump_enter
 {
-    CMD_HEADER;
+    HEADER;
 };
 
 struct cmd_jump_exit
 {
-    CMD_HEADER;
+    HEADER;
 };
 
-/* Use CMD_MOVE_PATH instead. */
 struct cmd_body_path
 {
-    CMD_HEADER;
+    HEADER;
     int bi;
     int pi;
 };
 
-/* Use CMD_MOVE_TIME instead. */
 struct cmd_body_time
 {
-    CMD_HEADER;
+    HEADER;
     int   bi;
     float t;
 };
 
 struct cmd_goal_open
 {
-    CMD_HEADER;
+    HEADER;
 };
 
 struct cmd_swch_enter
 {
-    CMD_HEADER;
+    HEADER;
     int xi;
 };
 
 struct cmd_swch_toggle
 {
-    CMD_HEADER;
+    HEADER;
     int xi;
-    /* FIXME: this should have had a flag to indicate state. */
 };
 
 struct cmd_swch_exit
 {
-    CMD_HEADER;
+    HEADER;
     int xi;
 };
 
 struct cmd_updates_per_second
 {
-    CMD_HEADER;
+    HEADER;
     int n;
 };
 
 struct cmd_ball_radius
 {
-    CMD_HEADER;
+    HEADER;
     float r;
 };
 
 struct cmd_clear_items
 {
-    CMD_HEADER;
+    HEADER;
 };
 
 struct cmd_clear_balls
 {
-    CMD_HEADER;
+    HEADER;
 };
 
 struct cmd_ball_position
 {
-    CMD_HEADER;
+    HEADER;
     float p[3];
 };
 
 struct cmd_ball_basis
 {
-    CMD_HEADER;
+    HEADER;
     float e[2][3];
 };
 
 struct cmd_ball_pend_basis
 {
-    CMD_HEADER;
+    HEADER;
     float E[2][3];
 };
 
 struct cmd_view_position
 {
-    CMD_HEADER;
+    HEADER;
     float p[3];
 };
 
 struct cmd_view_center
 {
-    CMD_HEADER;
+    HEADER;
     float c[3];
 };
 
 struct cmd_view_basis
 {
-    CMD_HEADER;
+    HEADER;
     float e[2][3];
 };
 
 struct cmd_current_ball
 {
-    CMD_HEADER;
+    HEADER;
     int ui;
 };
 
 struct cmd_path_flag
 {
-    CMD_HEADER;
+    HEADER;
     int pi;
     int f;
 };
 
 struct cmd_step_simulation
 {
-    CMD_HEADER;
+    HEADER;
     float dt;
 };
 
 struct cmd_map
 {
-    CMD_HEADER;
+    HEADER;
     char *name;
     struct
     {
@@ -275,30 +271,13 @@ struct cmd_map
 
 struct cmd_tilt_axes
 {
-    CMD_HEADER;
+    HEADER;
     float x[3], z[3];
-};
-
-struct cmd_move_path
-{
-    CMD_HEADER;
-    int mi;
-    int pi;
-};
-
-struct cmd_move_time
-{
-    CMD_HEADER;
-    int   mi;
-    float t;
 };
 
 union cmd
 {
-    enum cmd_type type;
-
-    struct { CMD_HEADER; } header;
-
+    HEADER;
     struct cmd_end_of_update      eou;
     struct cmd_make_ball          mkball;
     struct cmd_make_item          mkitem;
@@ -331,38 +310,14 @@ union cmd
     struct cmd_step_simulation    stepsim;
     struct cmd_map                map;
     struct cmd_tilt_axes          tiltaxes;
-    struct cmd_move_path          movepath;
-    struct cmd_move_time          movetime;
 };
 
-#undef CMD_HEADER
+/* No module should see this. */
+#undef HEADER
 
 #include "fs.h"
 
 int cmd_put(fs_file, const union cmd *);
 int cmd_get(fs_file, union cmd *);
-
-void cmd_free(union cmd *);
-
-/*---------------------------------------------------------------------------*/
-
-struct cmd_state
-{
-    int ups;                            /* Updates per second                */
-    int first_update;                   /* First update flag                 */
-    int next_update;                    /* Previous command was EOU          */
-    int curr_ball;                      /* Current ball index                */
-    int got_tilt_axes;                  /* Received tilt axes in this update */
-};
-
-#define cmd_state_init(cs) do { \
-    (cs)->ups = 0;              \
-    (cs)->first_update = 1;     \
-    (cs)->next_update = 0;      \
-    (cs)->curr_ball = 0;        \
-    (cs)->got_tilt_axes = 0;    \
-} while (0)
-
-/*---------------------------------------------------------------------------*/
 
 #endif

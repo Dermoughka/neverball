@@ -15,14 +15,11 @@
 #include <string.h>
 
 #include "gui.h"
-#include "transition.h"
 #include "set.h"
 #include "progress.h"
 #include "audio.h"
 #include "config.h"
-#include "demo.h"
-#include "lang.h"
-#include "key.h"
+#include "st_shared.h"
 
 #include "game_server.h"
 #include "game_client.h"
@@ -31,37 +28,12 @@
 #include "st_play.h"
 #include "st_start.h"
 #include "st_over.h"
-#include "st_done.h"
-#include "st_shared.h"
 
 /*---------------------------------------------------------------------------*/
 
-static int check_nodemo = 1;
-
-enum
-{
-    LEVEL_START = GUI_LAST,
-};
-
-static int level_action(int token, int value)
-{
-    switch (token)
-    {
-        case LEVEL_START:
-            return goto_state(&st_play_ready);
-
-        case GUI_BACK:
-            progress_stop();
-            return goto_exit();
-    }
-
-    return 1;
-}
-
-static int level_gui(void)
+static int level_enter(void)
 {
     int id, jd, kd;
-    const char *message = level_msg(curr_level());
 
     if ((id = gui_vstack(0)))
     {
@@ -84,85 +56,45 @@ static int level_gui(void)
                 if (curr_mode() == MODE_CHALLENGE)
                     sprintf(setattr, "%s: %s", set_name(curr_set()),
                             mode_to_str(MODE_CHALLENGE, 1));
-                else if (curr_mode() == MODE_STANDALONE)
-                    sprintf(setattr, _("Standalone level"));
                 else
                     sprintf(setattr, "%s", set_name(curr_set()));
 
-                gui_label(kd, lvlattr,
-                        b ? GUI_MED : GUI_LRG,
-                        b ? gui_wht : 0,
-                        b ? gui_grn : 0);
-
-                gui_label(kd, setattr, GUI_SML, gui_wht, gui_wht);
-
-                gui_set_rect(kd, GUI_ALL);
+                gui_label(kd, lvlattr, b ? GUI_MED : GUI_LRG, GUI_TOP,
+                          b ? gui_wht : 0, b ? gui_grn : 0);
+                gui_label(kd, setattr, GUI_SML,               GUI_BOT,
+                          gui_wht,         gui_wht);
             }
             gui_filler(jd);
         }
         gui_space(id);
 
-        if (message && *message)
-        {
-            gui_multi(id, message, GUI_SML, gui_wht, gui_wht);
-            gui_space(id);
-        }
-
-        if ((jd = gui_hstack(id)))
-        {
-            if ((kd = gui_hstack(jd)))
-            {
-                gui_label(kd, GUI_TRIANGLE_RIGHT, GUI_SML, gui_grn, gui_grn);
-                gui_label(kd, _("Start"), GUI_SML, gui_wht, gui_wht);
-
-                gui_set_state(kd, LEVEL_START, 0);
-                gui_set_rect(kd, GUI_ALL);
-                gui_focus(kd);
-            }
-
-            gui_filler(jd);
-
-            gui_back_button(jd);
-        }
+        gui_multi(id, level_msg(curr_level()),
+                  GUI_SML, GUI_ALL,
+                  gui_wht, gui_wht);
 
         gui_layout(id, 0, 0);
     }
 
+    game_set_fly(1.f, NULL);
+    game_client_step(NULL);
+
     return id;
-}
-
-static int level_enter(struct state *st, struct state *prev, int intent)
-{
-    game_client_fly(1.0f);
-
-    if (check_nodemo && !demo_fp)
-    {
-        goto_state(&st_nodemo);
-        return 0;
-    }
-    else check_nodemo = 1;
-
-    return transition_slide(level_gui(), 1, intent);
 }
 
 static void level_timer(int id, float dt)
 {
-    gui_timer(id, dt);
     game_step_fade(dt);
+}
+
+static int level_click(int b, int d)
+{
+    return (b == SDL_BUTTON_LEFT && d == 1) ? goto_state(&st_play_ready) : 1;
 }
 
 static int level_keybd(int c, int d)
 {
-    if (d)
-    {
-        if (c == KEY_EXIT)
-        {
-            progress_stop();
-            return goto_exit();
-        }
-        if (c == KEY_POSE)
-            return goto_state(&st_poser);
-    }
+    if (d && c == SDLK_F12)
+        return goto_state(&st_poser);
     return 1;
 }
 
@@ -172,142 +104,28 @@ static int level_buttn(int b, int d)
     {
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
         {
-            int active = gui_active();
-
-            if (active)
-                return level_action(gui_token(active), gui_value(active));
-            else
-                return level_action(LEVEL_START, 0);
+            return goto_state(&st_play_ready);
         }
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_START, b))
-            return level_action(LEVEL_START, 0);
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return level_action(GUI_BACK, 0);
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+        {
+            progress_stop();
+            return goto_state(&st_over);
+        }
     }
     return 1;
-}
-
-static int level_click(int b, int d)
-{
-    if (gui_click(b, d))
-        return level_buttn(config_get_d(CONFIG_JOYSTICK_BUTTON_A), 1);
-
-    return (b == SDL_BUTTON_LEFT && d == 0) ? goto_state(&st_play_ready) : 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
 static void poser_paint(int id, float t)
 {
-    game_client_draw(POSE_LEVEL, t);
-}
-
-static int poser_keybd(int c, int d)
-{
-    if (d)
-    {
-        if (c == KEY_EXIT || c == KEY_POSE)
-            return goto_state(&st_level);
-    }
-    return 1;
+    game_draw(1, t);
 }
 
 static int poser_buttn(int c, int d)
 {
-    if (d && config_tst_d(CONFIG_JOYSTICK_BUTTON_B, c))
+    if (d && config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, c))
         return goto_state(&st_level);
-
-    return 1;
-}
-
-/*---------------------------------------------------------------------------*/
-
-static int nodemo_gui(void)
-{
-    int id;
-
-    if ((id = gui_vstack(0)))
-    {
-        gui_label(id, _("Warning!"), GUI_MED, 0, 0);
-        gui_space(id);
-        gui_multi(id, _("A replay file could not be opened for writing.\n"
-                        "This game will not be recorded.\n"),
-                  GUI_SML, gui_wht, gui_wht);
-
-        gui_layout(id, 0, 0);
-    }
-
-    return id;
-}
-
-static int nodemo_enter(struct state *st, struct state *prev, int intent)
-{
-    check_nodemo = 0;
-
-    return transition_slide(nodemo_gui(), 1, intent);
-}
-
-static void nodemo_timer(int id, float dt)
-{
-    game_step_fade(dt);
-    gui_timer(id, dt);
-}
-
-static int nodemo_keybd(int c, int d)
-{
-    if (d)
-    {
-        if (c == KEY_EXIT)
-            return goto_state(&st_level);
-    }
-    return 1;
-}
-
-static int nodemo_buttn(int b, int d)
-{
-    if (d)
-    {
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
-            return goto_state(&st_level);
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return goto_state(&st_level);
-    }
-    return 1;
-}
-
-
-/*---------------------------------------------------------------------------*/
-
-int goto_exit(void)
-{
-    struct state *curr = curr_state();
-    struct state *dst;
-
-    if (progress_done())
-        dst = &st_done;
-    else if (curr_mode() == MODE_CHALLENGE)
-        dst = &st_over;
-    else if (curr_mode() == MODE_STANDALONE)
-        dst = NULL;
-    else
-        dst = &st_start;
-
-    if (dst)
-    {
-        /* Visit the auxilliary screen or exit to level selection. */
-
-        if (dst != curr && dst != &st_start)
-            goto_state(dst);
-        else
-            exit_state(&st_start);
-    }
-    else
-    {
-        /* Quit the game. */
-
-        SDL_Event e = { SDL_QUIT };
-        SDL_PushEvent(&e);
-    }
 
     return 1;
 }
@@ -319,12 +137,13 @@ struct state st_level = {
     shared_leave,
     shared_paint,
     level_timer,
-    shared_point,
-    shared_stick,
+    NULL,
+    NULL,
     NULL,
     level_click,
     level_keybd,
-    level_buttn
+    level_buttn,
+    1, 0
 };
 
 struct state st_poser = {
@@ -336,19 +155,7 @@ struct state st_poser = {
     NULL,
     NULL,
     NULL,
-    poser_keybd,
-    poser_buttn
-};
-
-struct state st_nodemo = {
-    nodemo_enter,
-    shared_leave,
-    shared_paint,
-    nodemo_timer,
-    shared_point,
-    shared_stick,
-    shared_angle,
-    shared_click_basic,
-    nodemo_keybd,
-    nodemo_buttn
+    NULL,
+    poser_buttn,
+    1, 0
 };

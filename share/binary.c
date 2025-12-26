@@ -16,34 +16,57 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <SDL_endian.h>
+
 #include "fs.h"
 
 /*---------------------------------------------------------------------------*/
 
-void put_float(fs_file fout, float f)
+void put_float(fs_file fout, const float *f)
 {
-    unsigned int val = 0;
+    const unsigned char *p = (const unsigned char *) f;
 
-    memcpy(&val, &f, sizeof (val));
-
-    fs_putc((val)       & 0xff, fout);
-    fs_putc((val >> 8)  & 0xff, fout);
-    fs_putc((val >> 16) & 0xff, fout);
-    fs_putc((val >> 24) & 0xff, fout);
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+    fs_putc((int) p[3], fout);
+    fs_putc((int) p[2], fout);
+    fs_putc((int) p[1], fout);
+    fs_putc((int) p[0], fout);
+#else
+    fs_putc((int) p[0], fout);
+    fs_putc((int) p[1], fout);
+    fs_putc((int) p[2], fout);
+    fs_putc((int) p[3], fout);
+#endif
 }
 
-void put_index(fs_file fout, int val)
+void put_index(fs_file fout, const int *i)
 {
-    fs_putc((val)       & 0xff, fout);
-    fs_putc((val >> 8)  & 0xff, fout);
-    fs_putc((val >> 16) & 0xff, fout);
-    fs_putc((val >> 24) & 0xff, fout);
+    const unsigned char *p = (const unsigned char *) i;
+
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+    fs_putc((int) p[3], fout);
+    fs_putc((int) p[2], fout);
+    fs_putc((int) p[1], fout);
+    fs_putc((int) p[0], fout);
+#else
+    fs_putc((int) p[0], fout);
+    fs_putc((int) p[1], fout);
+    fs_putc((int) p[2], fout);
+    fs_putc((int) p[3], fout);
+#endif
 }
 
-void put_short(fs_file fout, short val)
+void put_short(fs_file fout, const short *s)
 {
-    fs_putc((val)      & 0xff, fout);
-    fs_putc((val >> 8) & 0xff, fout);
+    const unsigned char *p = (const unsigned char *) s;
+
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+    fs_putc((int) p[1], fout);
+    fs_putc((int) p[0], fout);
+#else
+    fs_putc((int) p[0], fout);
+    fs_putc((int) p[1], fout);
+#endif
 }
 
 void put_array(fs_file fout, const float *v, size_t n)
@@ -51,42 +74,56 @@ void put_array(fs_file fout, const float *v, size_t n)
     size_t i;
 
     for (i = 0; i < n; i++)
-        put_float(fout, v[i]);
+        put_float(fout, v + i);
 }
 
 /*---------------------------------------------------------------------------*/
 
-float get_float(fs_file fin)
+void get_float(fs_file fin, float *f)
 {
-    unsigned int val =
-        (fs_getc(fin) & 0xff)       |
-        (fs_getc(fin) & 0xff) << 8  |
-        (fs_getc(fin) & 0xff) << 16 |
-        (fs_getc(fin) & 0xff) << 24;
+    unsigned char *p = (unsigned char *) f;
 
-    float f = 0.0f;
-
-    memcpy(&f, &val, sizeof (f));
-
-    return f;
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+    p[3] = (unsigned char) fs_getc(fin);
+    p[2] = (unsigned char) fs_getc(fin);
+    p[1] = (unsigned char) fs_getc(fin);
+    p[0] = (unsigned char) fs_getc(fin);
+#else
+    p[0] = (unsigned char) fs_getc(fin);
+    p[1] = (unsigned char) fs_getc(fin);
+    p[2] = (unsigned char) fs_getc(fin);
+    p[3] = (unsigned char) fs_getc(fin);
+#endif
 }
 
-int get_index(fs_file fin)
+void get_index(fs_file fin, int *i)
 {
-    int val =
-        (fs_getc(fin) & 0xff)       |
-        (fs_getc(fin) & 0xff) << 8  |
-        (fs_getc(fin) & 0xff) << 16 |
-        (fs_getc(fin) & 0xff) << 24;
+    unsigned char *p = (unsigned char *) i;
 
-    return val;
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+    p[3] = (unsigned char) fs_getc(fin);
+    p[2] = (unsigned char) fs_getc(fin);
+    p[1] = (unsigned char) fs_getc(fin);
+    p[0] = (unsigned char) fs_getc(fin);
+#else
+    p[0] = (unsigned char) fs_getc(fin);
+    p[1] = (unsigned char) fs_getc(fin);
+    p[2] = (unsigned char) fs_getc(fin);
+    p[3] = (unsigned char) fs_getc(fin);
+#endif
 }
 
-short get_short(fs_file fin)
+void get_short(fs_file fin, short *s)
 {
-    short val = (fs_getc(fin) & 0xff) | (fs_getc(fin) & 0xff) << 8;
+    unsigned char *p = (unsigned char *) s;
 
-    return val;
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+    p[1] = (unsigned char) fs_getc(fin);
+    p[0] = (unsigned char) fs_getc(fin);
+#else
+    p[0] = (unsigned char) fs_getc(fin);
+    p[1] = (unsigned char) fs_getc(fin);
+#endif
 }
 
 void get_array(fs_file fin, float *v, size_t n)
@@ -94,7 +131,7 @@ void get_array(fs_file fin, float *v, size_t n)
     size_t i;
 
     for (i = 0; i < n; i++)
-        v[i] = get_float(fin);
+        get_float(fin, v + i);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -105,21 +142,21 @@ void put_string(fs_file fout, const char *s)
     fs_putc('\0', fout);
 }
 
-void get_string(fs_file fin, char *s, size_t max)
+void get_string(fs_file fin, char *s, int max)
 {
-    size_t pos = 0;
     int c;
 
     while ((c = fs_getc(fin)) >= 0)
     {
-        if (pos < max)
+        if (max > 0)
         {
-            s[pos++] = c;
+            *s++ = c;
+            max--;
 
             /* Terminate the string, but keep reading until NUL. */
 
-            if (pos == max)
-                s[pos - 1] = 0;
+            if (max == 0)
+                *(s - 1) = 0;
         }
 
         if (c == 0)

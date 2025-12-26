@@ -17,43 +17,32 @@
 #include <string.h>
 #include <math.h>
 
-#include "config.h"
 #include "glext.h"
 #include "part.h"
 #include "vec3.h"
 #include "image.h"
-#include "geom.h"
-#include "hmd.h"
-#include "video.h"
 
 /*---------------------------------------------------------------------------*/
 
 struct part
 {
-    float v[3];               /* Velocity                                    */
-    float w;                  /* Angular velocity (degrees)                  */
-    float p[3];               /* Position                                    */
-    float c[3];               /* Color                                       */
-    float t;                  /* Time until death. Doubles as opacity.       */
+    float t;
+    float a;
+    float w;
+    float c[3];
+    float p[3];
+    float v[3];
 };
 
-static struct part coin_part[PART_MAX_COIN];
+static struct part part_coin[PART_MAX_COIN];
+static struct part part_goal[PART_MAX_GOAL];
+static struct part part_jump[PART_MAX_JUMP];
+static GLuint      part_text_star;
+static GLuint      part_text_squiggle;
+static GLuint      part_list;
 
-static GLuint coin_vbo;
-static GLuint coin_ebo;
-
-/*---------------------------------------------------------------------------*/
-
-static struct b_mtrl coin_base_mtrl =
-{
-    { 0.8f, 0.8f, 0.8f, 1.0f },
-    { 0.2f, 0.2f, 0.2f, 1.0f },
-    { 0.0f, 0.0f, 0.0f, 1.0f },
-    { 0.0f, 0.0f, 0.0f, 1.0f },
-    { 0.0f }, 0.0f, M_TRANSPARENT, IMG_PART_STAR
-};
-
-static int coin_mtrl;
+static float goal_height;
+static float jump_height;
 
 /*---------------------------------------------------------------------------*/
 
@@ -61,102 +50,114 @@ static int coin_mtrl;
 
 static float rnd(float l, float h)
 {
-    return l + (h - l) * rand() / (float) RAND_MAX;
+    return l + (h - l) * rand() / RAND_MAX;
 }
 
 /*---------------------------------------------------------------------------*/
 
-#define CURR 0
-#define PREV 1
-
-struct part_lerp
-{
-    float p[2][3];
-};
-
-static struct part_lerp part_lerp_coin[PART_MAX_COIN];
-
-void part_lerp_copy(void)
+void part_reset(float zh, float jh)
 {
     int i;
 
+    goal_height = zh;
+    jump_height = jh;
+
     for (i = 0; i < PART_MAX_COIN; i++)
-        v_cpy(part_lerp_coin[i].p[PREV],
-              part_lerp_coin[i].p[CURR]);
-}
+        part_coin[i].t = 0.0f;
 
-void part_lerp_init(void)
-{
-}
-
-void part_lerp_burst(int i)
-{
-    if (coin_part[i].t >= 1.0f)
+    for (i = 0; i < PART_MAX_GOAL; i++)
     {
-        v_cpy(part_lerp_coin[i].p[PREV], coin_part[i].p);
-        v_cpy(part_lerp_coin[i].p[CURR], coin_part[i].p);
+        float t = rnd(+0.1f,      +1.0f);
+        float a = rnd(-1.0f * PI, +1.0f * PI);
+        float w = rnd(-2.0f * PI, +2.0f * PI);
+
+        part_goal[i].t = t;
+        part_goal[i].a = V_DEG(a);
+        part_goal[i].w = V_DEG(w);
+
+        part_goal[i].c[0] = 1.0f;
+        part_goal[i].c[1] = 1.0f;
+        part_goal[i].c[2] = 0.0f;
+
+        part_goal[i].p[0] = fsinf(a);
+        part_goal[i].p[1] = (1.f - t) * goal_height;
+        part_goal[i].p[2] = fcosf(a);
+
+        part_goal[i].v[0] = 0.f;
+        part_goal[i].v[1] = 0.f;
+        part_goal[i].v[2] = 0.f;
+    }
+
+    for (i = 0; i < PART_MAX_JUMP; i++)
+    {
+        float t = rnd(+0.1f,      +1.0f);
+        float a = rnd(-1.0f * PI, +1.0f * PI);
+        float w = rnd(+0.5f,      +2.5f);
+
+        float vy = rnd(+0.025f, +0.25f);
+
+        part_jump[i].t = t;
+        part_jump[i].a = V_DEG(a);
+        part_jump[i].w = w;
+
+        part_jump[i].c[0] = 1.0f;
+        part_jump[i].c[1] = 1.0f;
+        part_jump[i].c[2] = 1.0f;
+
+        part_jump[i].p[0] = fsinf(a);
+        part_jump[i].p[1] = (1.f - t) * jump_height;
+        part_jump[i].p[2] = fcosf(a);
+
+        part_jump[i].v[0] = 0.f;
+        part_jump[i].v[1] = vy;
+        part_jump[i].v[2] = 0.f;
     }
 }
 
-void part_lerp_apply(float a)
+void part_init(float zh, float jh)
 {
-    int i;
+    memset(part_coin, 0, PART_MAX_COIN * sizeof (struct part));
+    memset(part_goal, 0, PART_MAX_GOAL * sizeof (struct part));
+    memset(part_jump, 0, PART_MAX_JUMP * sizeof (struct part));
 
-    for (i = 0; i < PART_MAX_COIN; i++)
-        if (coin_part[i].t > 0.0f)
-            v_lerp(coin_part[i].p,
-                   part_lerp_coin[i].p[PREV],
-                   part_lerp_coin[i].p[CURR], a);
-}
+    part_text_star     = make_image_from_file(IMG_PART_STAR);
+    part_text_squiggle = make_image_from_file(IMG_PART_SQUIGGLE);
 
-/*---------------------------------------------------------------------------*/
+    part_list = glGenLists(1);
 
-void part_reset(void)
-{
-    int i;
+    glNewList(part_list, GL_COMPILE);
+    {
+        glBegin(GL_QUADS);
+        {
+            glTexCoord2f(0.f, 0.f);
+            glVertex2f(-PART_SIZE, -PART_SIZE);
 
-    for (i = 0; i < PART_MAX_COIN; i++)
-        coin_part[i].t = 0.0f;
+            glTexCoord2f(1.f, 0.f);
+            glVertex2f(+PART_SIZE, -PART_SIZE);
 
-    part_lerp_init();
-}
+            glTexCoord2f(1.f, 1.f);
+            glVertex2f(+PART_SIZE, +PART_SIZE);
 
-void part_init(void)
-{
-    static const GLfloat verts[4][5] = {
-        { -0.5f, -0.5f, 0.0f, 0.0f, 0.0f },
-        { +0.5f, -0.5f, 0.0f, 1.0f, 0.0f },
-        { -0.5f, +0.5f, 0.0f, 0.0f, 1.0f },
-        { +0.5f, +0.5f, 0.0f, 1.0f, 1.0f },
-    };
+            glTexCoord2f(0.f, 1.f);
+            glVertex2f(-PART_SIZE, +PART_SIZE);
+        }
+        glEnd();
+    }
+    glEndList();
 
-    static const GLushort elems[4] = {
-        0u, 1u, 2u, 3u
-    };
-
-    coin_mtrl = mtrl_cache(&coin_base_mtrl);
-
-    memset(coin_part, 0, sizeof (coin_part));
-
-    glGenBuffers_(1,              &coin_vbo);
-    glBindBuffer_(GL_ARRAY_BUFFER, coin_vbo);
-    glBufferData_(GL_ARRAY_BUFFER, sizeof (verts), verts, GL_STATIC_DRAW);
-    glBindBuffer_(GL_ARRAY_BUFFER, 0);
-
-    glGenBuffers_(1, &coin_ebo);
-    glBindBuffer_(GL_ELEMENT_ARRAY_BUFFER, coin_ebo);
-    glBufferData_(GL_ELEMENT_ARRAY_BUFFER, sizeof (elems), elems, GL_STATIC_DRAW);
-    glBindBuffer_(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-    part_reset();
+    part_reset(zh, jh);
 }
 
 void part_free(void)
 {
-    glDeleteBuffers_(1, &coin_vbo);
+    if (glIsList(part_list))
+        glDeleteLists(part_list, 1);
 
-    mtrl_free(coin_mtrl);
-    coin_mtrl = 0;
+    if (glIsTexture(part_text_star))
+        glDeleteTextures(1, &part_text_star);
+
+    if (glIsTexture(part_text_squiggle))
+        glDeleteTextures(1, &part_text_squiggle);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -166,29 +167,27 @@ void part_burst(const float *p, const float *c)
     int i, n = 0;
 
     for (i = 0; n < 10 && i < PART_MAX_COIN; i++)
-        if (coin_part[i].t <= 0.f)
+        if (part_coin[i].t <= 0.f)
         {
             float a = rnd(-1.0f * PI, +1.0f * PI);
             float b = rnd(+0.3f * PI, +0.5f * PI);
             float w = rnd(-4.0f * PI, +4.0f * PI);
 
-            coin_part[i].c[0] = c[0];
-            coin_part[i].c[1] = c[1];
-            coin_part[i].c[2] = c[2];
+            part_coin[i].p[0] = p[0];
+            part_coin[i].p[1] = p[1];
+            part_coin[i].p[2] = p[2];
 
-            coin_part[i].p[0] = p[0];
-            coin_part[i].p[1] = p[1];
-            coin_part[i].p[2] = p[2];
+            part_coin[i].v[0] = 4.f * fcosf(a) * fcosf(b);
+            part_coin[i].v[1] = 4.f *            fsinf(b);
+            part_coin[i].v[2] = 4.f * fsinf(a) * fcosf(b);
 
-            coin_part[i].v[0] = 4.f * fcosf(a) * fcosf(b);
-            coin_part[i].v[1] = 4.f *            fsinf(b);
-            coin_part[i].v[2] = 4.f * fsinf(a) * fcosf(b);
+            part_coin[i].c[0] = c[0];
+            part_coin[i].c[1] = c[1];
+            part_coin[i].c[2] = c[2];
 
-            coin_part[i].w = V_DEG(w);
-
-            coin_part[i].t = 1.f;
-
-            part_lerp_burst(i);
+            part_coin[i].t = 1.f;
+            part_coin[i].a = 0.f;
+            part_coin[i].w = V_DEG(w);
 
             n++;
         }
@@ -196,70 +195,136 @@ void part_burst(const float *p, const float *c)
 
 /*---------------------------------------------------------------------------*/
 
-static void part_fall(const float *g, float dt)
+static void part_fall(struct part *part, int n, const float *g, float dt)
 {
     int i;
 
-    for (i = 0; i < PART_MAX_COIN; i++)
-        if (coin_part[i].t > 0.f)
+    for (i = 0; i < n; i++)
+        if (part[i].t > 0.f)
         {
-            coin_part[i].t -= dt;
+            part[i].t -= dt;
 
-            v_mad(coin_part[i].v, coin_part[i].v, g, dt);
+            part[i].v[0] += (g[0] * dt);
+            part[i].v[1] += (g[1] * dt);
+            part[i].v[2] += (g[2] * dt);
 
-            v_mad(part_lerp_coin[i].p[CURR], part_lerp_coin[i].p[CURR], coin_part[i].v, dt);
+            part[i].p[0] += (part[i].v[0] * dt);
+            part[i].p[1] += (part[i].v[1] * dt);
+            part[i].p[2] += (part[i].v[2] * dt);
         }
-        else coin_part[i].t = 0.0f;
+}
+
+static void part_spin(struct part *part, int n, const float *g, float dt)
+{
+    int i;
+
+    for (i = 0; i < n; i++)
+        if (part[i].t > 0.f)
+        {
+            part[i].a += 30.f * dt;
+
+            part[i].p[0] = fsinf(V_RAD(part[i].a));
+            part[i].p[2] = fcosf(V_RAD(part[i].a));
+        }
 }
 
 void part_step(const float *g, float dt)
 {
-    part_lerp_copy();
-    part_fall(g, dt);
+    int i;
+
+    part_fall(part_coin, PART_MAX_COIN, g, dt);
+
+    if (g[1] > 0.f)
+        part_fall(part_goal, PART_MAX_GOAL, g, dt);
+    else
+        part_spin(part_goal, PART_MAX_GOAL, g, dt);
+
+    for (i = 0; i < PART_MAX_JUMP; i++)
+    {
+        part_jump[i].p[1] += part_jump[i].v[1] * dt;
+
+        if (part_jump[i].p[1] > jump_height)
+            part_jump[i].p[1] = 0.0f;
+    }
 }
 
 /*---------------------------------------------------------------------------*/
 
-void part_draw_coin(const struct s_draw *draw, struct s_rend *rend, const float *M, float t)
+static void part_draw(const float *M,
+                      const float *p, float r, float rz, float s)
+{
+    glPushMatrix();
+    {
+        glTranslatef(r * p[0], p[1], r * p[2]);
+        glMultMatrixf(M);
+        glRotatef(rz, 0.f, 0.f, 1.f);
+        glScalef(s, s, 1.0f);
+
+        glCallList(part_list);
+    }
+    glPopMatrix();
+}
+
+void part_draw_coin(const float *M, float t)
 {
     int i;
 
-    r_apply_mtrl(rend, coin_mtrl);
+    glBindTexture(GL_TEXTURE_2D, part_text_star);
 
-    glBindBuffer_(GL_ARRAY_BUFFER, coin_vbo);
-    glBindBuffer_(GL_ELEMENT_ARRAY_BUFFER, coin_ebo);
+    for (i = 0; i < PART_MAX_COIN; i++)
+        if (part_coin[i].t > 0.f)
+        {
+            glColor4f(part_coin[i].c[0],
+                      part_coin[i].c[1],
+                      part_coin[i].c[2],
+                      part_coin[i].t);
 
-    glDisableClientState(GL_NORMAL_ARRAY);
+            part_draw(M, part_coin[i].p, 1.0f, t * part_coin[i].w, 1.0f);
+        }
+}
+
+void part_draw_goal(const float *M, float radius, float a, float t)
+{
+    int i;
+
+    glBindTexture(GL_TEXTURE_2D, part_text_star);
+
+    glColor4f(1.0f, 1.0f, 0.0f, a);
+
+    for (i = 0; i < PART_MAX_GOAL; i++)
+        if (part_goal[i].t > 0.0f)
+            part_draw(M, part_goal[i].p, radius - 0.05f,
+                      t * part_goal[i].w, 1.0f);
+}
+
+void part_draw_jump(const float *M, float radius, float a, float t)
+{
+    int i;
+
+    glBindTexture(GL_TEXTURE_2D, part_text_squiggle);
+
+    for (i = 0; i < PART_MAX_JUMP; i++)
     {
-        glVertexPointer  (3, GL_FLOAT, sizeof (GLfloat) * 5, (GLvoid *) (                   0u));
-        glTexCoordPointer(2, GL_FLOAT, sizeof (GLfloat) * 5, (GLvoid *) (sizeof (GLfloat) * 3u));
+        glColor4f(part_jump[i].c[0],
+                  part_jump[i].c[1],
+                  part_jump[i].c[2],
+                  1.0f - part_jump[i].p[1] / jump_height);
 
-        for (i = 0; i < PART_MAX_COIN; ++i)
-            if (coin_part[i].t > 0.0f)
-            {
-                glColor4f(coin_part[i].c[0], coin_part[i].c[1], coin_part[i].c[2], coin_part[i].t);
+        /*
+         * X is the current time since some Epoch, Y is the time it
+         * takes for a squiggle to grow to its full size and then
+         * shrink again.  F is the current scale of the squiggle in
+         * the interval [0.0, 1.0].  The ratio is offset by 0.5 to
+         * have F = 1.0 when X = 0.0.
+         */
 
-                glPushMatrix();
-                {
-                    glTranslatef(coin_part[i].p[0], coin_part[i].p[1], coin_part[i].p[2]);
+#define F(x, y) fabsf(fsinf(((x) / (y) + 0.5f) * PI))
 
-                    if (M)
-                        glMultMatrixf(M);
+        part_draw(M, part_jump[i].p, radius - 0.05f,
+                  0.0f, F(t, part_jump[i].w));
 
-                    glScalef(PART_SIZE * 2.0f, PART_SIZE * 2.0f, 1.0f);
-                    glRotatef(t * coin_part[i].w, 0.0f, 0.0f, 1.0f);
-
-                    glDrawElements(GL_TRIANGLE_STRIP, 4, GL_UNSIGNED_SHORT, (GLvoid *) 0u);
-                }
-                glPopMatrix();
-            }
+#undef F
     }
-    glEnableClientState(GL_NORMAL_ARRAY);
-
-    glBindBuffer_(GL_ARRAY_BUFFER, 0);
-    glBindBuffer_(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-    glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 }
 
 /*---------------------------------------------------------------------------*/

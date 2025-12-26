@@ -5,24 +5,14 @@
 
 /*---------------------------------------------------------------------------*/
 
-enum
-{
-    RANK_MIN = -1,
-
-    RANK_HARD,
-    RANK_MEDM,
-    RANK_EASY,
-    RANK_LAST,
-
-    RANK_MAX
-};
+#define NSCORE 3
 
 struct score
 {
-    char player[RANK_MAX][MAXSTR];
+    char player[NSCORE + 1][MAXNAM];
 
-    int  timer[RANK_MAX];               /* Time elapsed                      */
-    int  coins[RANK_MAX];               /* Coins collected                   */
+    int timer [NSCORE + 1]; /* Time elapsed    */
+    int coins [NSCORE + 1]; /* Coins collected */
 };
 
 /*---------------------------------------------------------------------------*/

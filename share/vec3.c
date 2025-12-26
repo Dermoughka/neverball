@@ -32,18 +32,9 @@ void v_nrm(float *n, const float *v)
 {
     float d = v_len(v);
 
-    if (d == 0.0f)
-    {
-        n[0] = 0.0f;
-        n[1] = 0.0f;
-        n[2] = 0.0f;
-    }
-    else
-    {
-        n[0] = v[0] / d;
-        n[1] = v[1] / d;
-        n[2] = v[2] / d;
-    }
+    n[0] = v[0] / d;
+    n[1] = v[1] / d;
+    n[2] = v[2] / d;
 }
 
 void v_crs(float *u, const float *v, const float *w)
@@ -277,146 +268,22 @@ void m_vxfm(float *v, const float *M, const float *w)
 
 /*---------------------------------------------------------------------------*/
 
-void q_as_axisangle(const float q[4], float u[3], float *a)
+void m_view(float *M,
+            const float *c,
+            const float *p,
+            const float *u)
 {
-    *a = 2.0f * facosf(q[0]);
-    v_nrm(u, q + 1);
-}
+    float x[3];
+    float y[3];
+    float z[3];
 
-void q_by_axisangle(float q[4], const float u[3], float a)
-{
-    float c = fcosf(a * 0.5f);
-    float s = fsinf(a * 0.5f);
-    float n[3];
+    v_sub(z, p, c);
+    v_nrm(z, z);
+    v_crs(x, u, z);
+    v_nrm(x, x);
+    v_crs(y, z, x);
 
-    v_nrm(n, u);
-
-    q[0] =        c;
-    q[1] = n[0] * s;
-    q[2] = n[1] * s;
-    q[3] = n[2] * s;
-}
-
-void q_nrm(float q[4], const float r[4])
-{
-    float d = q_len(r);
-
-    if (d == 0.0f)
-    {
-        q[0] = 1.0f;
-        q[1] = 0.0f;
-        q[2] = 0.0f;
-        q[3] = 0.0f;
-    }
-    else
-    {
-        q[0] = r[0] / d;
-        q[1] = r[1] / d;
-        q[2] = r[2] / d;
-        q[3] = r[3] / d;
-    }
-}
-
-void q_mul(float q[4], const float a[4], const float b[4])
-{
-    q[0] = a[0] * b[0] - a[1] * b[1] - a[2] * b[2] - a[3] * b[3];
-    q[1] = a[0] * b[1] + a[1] * b[0] + a[2] * b[3] - a[3] * b[2];
-    q[2] = a[0] * b[2] - a[1] * b[3] + a[2] * b[0] + a[3] * b[1];
-    q[3] = a[0] * b[3] + a[1] * b[2] - a[2] * b[1] + a[3] * b[0];
-}
-
-void q_rot(float v[3], const float r[4], const float w[3])
-{
-    float a[4], b[4], c[4];
-
-    a[0] = 0.0f;
-    a[1] = w[0];
-    a[2] = w[1];
-    a[3] = w[2];
-
-    q_mul(b, r, a);
-
-    a[0] =  r[0];
-    a[1] = -r[1];
-    a[2] = -r[2];
-    a[3] = -r[3];
-
-    q_mul(c, b, a);
-
-    v[0] = c[1];
-    v[1] = c[2];
-    v[2] = c[3];
-}
-
-void q_euler(float v[3], const float q[4])
-{
-    float m11 = (2 * q[0] * q[0]) + (2 * q[1] * q[1]) - 1;
-    float m12 = (2 * q[1] * q[2]) + (2 * q[0] * q[3]);
-    float m13 = (2 * q[1] * q[3]) - (2 * q[0] * q[2]);
-    float m23 = (2 * q[2] * q[3]) + (2 * q[0] * q[1]);
-    float m33 = (2 * q[0] * q[0]) + (2 * q[3] * q[3]) - 1;
-
-    v[0] = fatan2f(m12, m11);
-    v[1] = fasinf(-m13);
-    v[2] = fatan2f(m23, m33);
-}
-
-/*
- * Spherical linear interpolation
- */
-void q_slerp(float q[4], const float a[4], const float b[4], float t)
-{
-    float c, r, s, u, v;
-    int i = +1;
-
-    if (t <= 0.0f)
-    {
-        q_cpy(q, a);
-        return;
-    }
-
-    if (1.0f <= t)
-    {
-        q_cpy(q, b);
-        return;
-    }
-
-    /*
-     * a . b = |a||b| cos A
-     * |a| = |b| = 1
-     */
-
-    c = q_dot(a, b);
-
-    /* Ensure the shortest path. */
-
-    if (c < 0)
-    {
-        c = -c;
-        i = -1;
-    }
-
-    /* Fall back to normalized lerp for very similar orientations. */
-
-    if (1.0f - c < (float) TINY)
-    {
-        u = 1.0f - t;
-        v = t;
-    }
-    else
-    {
-        r = facosf(c);
-        s = fsinf(r);
-        u = fsinf((1.0f - t) * r) / s;
-        v = fsinf((t)        * r) / s * i;
-    }
-
-    q[0] = a[0] * u + b[0] * v;
-    q[1] = a[1] * u + b[1] * v;
-    q[2] = a[2] * u + b[2] * v;
-    q[3] = a[3] * u + b[3] * v;
-
-    q_nrm(q, q);
+    m_basis(M, x, y, z);
 }
 
 /*---------------------------------------------------------------------------*/

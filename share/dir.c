@@ -1,17 +1,3 @@
-/*
- * Copyright (C) 2003-2010 Neverball authors
- *
- * NEVERBALL is  free software; you can redistribute  it and/or modify
- * it under the  terms of the GNU General  Public License as published
- * by the Free  Software Foundation; either version 2  of the License,
- * or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT  ANY  WARRANTY;  without   even  the  implied  warranty  of
- * MERCHANTABILITY or  FITNESS FOR A PARTICULAR PURPOSE.   See the GNU
- * General Public License for more details.
- */
-
 #include <dirent.h>
 
 #include <string.h>
@@ -21,31 +7,34 @@
 #include "dir.h"
 #include "common.h"
 
-/*
- * HACK: MinGW provides numerous POSIX extensions to MSVCRT, including
- * dirent.h, so parasti ever so lazily has not bothered to port the
- * code below to FindFirstFile et al.
- */
-
-/*
- * Enumerate files in a system directory. Returns a List of allocated filenames.
- */
-List dir_list_files(const char *path)
+static char **get_dir_list(const char *path)
 {
     DIR *dir;
-    List files = NULL;
+    char **files = NULL;
+    int count = 0;
+
+    /*
+     * HACK: MinGW provides numerous POSIX extensions to MSVCRT,
+     * including dirent.h, so parasti ever so lazily has not bothered
+     * to port the code below to FindFirstFile et al.
+     */
 
     if ((dir = opendir(path)))
     {
         struct dirent *ent;
+
+        files = malloc(sizeof (char *));
 
         while ((ent = readdir(dir)))
         {
             if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
                 continue;
 
-            files = list_cons(strdup(ent->d_name), files);
+            files[count++] = strdup(ent->d_name);
+            files = realloc(files, (count + 1) * sizeof (char *));
         }
+
+        files[count] = NULL;
 
         closedir(dir);
     }
@@ -53,34 +42,33 @@ List dir_list_files(const char *path)
     return files;
 }
 
-/*
- * Free the allocated filenames and the List cells.
- */
-void dir_list_free(List files)
+static void free_dir_list(void *files)
 {
-    while (files)
+    if (files)
     {
-        free(files->data);
-        files = list_rest(files);
+        char **file;
+
+        /* Free file names. */
+        for (file = files; *file; free(*file++));
+
+        /* Free trailing NULL. */
+        free(*file);
+
+        /* Free pointer list. */
+        free(files);
     }
 }
 
-/*
- * Add a struct dir_item to the given Array.
- */
 static struct dir_item *add_item(Array items, const char *dir, const char *name)
 {
     struct dir_item *item = array_add(items);
 
-    item->path = path_join(dir, name);
+    item->path = *dir ? concat_string(dir, "/", name, NULL) : strdup(name);
     item->data = NULL;
 
     return item;
 }
 
-/*
- * Remove a struct dir_item from the given array.
- */
 static void del_item(Array items)
 {
     struct dir_item *item = array_get(items, array_len(items) - 1);
@@ -92,67 +80,67 @@ static void del_item(Array items)
 }
 
 /*
- * Enumerate files in a directory. Returns an Array of struct dir_item.
+ * Scan the directory PATH and return an array of dir_item structures
+ * for which FILTER evaluates to non-zero (or all, if FILTER is NULL).
+ * FILTER can associate data with a dir_item for later use by
+ * assigning it to the "data" member.  If GET_LIST is non-NULL, it is
+ * used to obtain a NULL-terminated list of names in PATH; this list
+ * is later freed with FREE_LIST.  If both are NULL, the default
+ * directory listing mechanism is used.
  *
- * By passing `list_files`, an arbitrary list may be turned into an Array
- * of struct dir_item. By passing `filter`, any struct dir_item may be
- * excluded from the final Array.
+ * (FIXME: GET_LIST was added to reduce code duplication when
+ * maintaining the existing "real file system" directory scanning
+ * functionality and at the same time supporting "virtual file system"
+ * directory scanning using custom routines.  The result of this is
+ * that dir_scan becomes a ridiculously general piece of code to
+ * "filter and turn an arbitrary list of strings into an array of
+ * dir_item structs".  This is too confusing; it's probably better to
+ * support VFS only and adapt accordingly.)
  */
 Array dir_scan(const char *path,
-               int  (*filter)    (struct dir_item *),
-               List (*list_files)(const char *),
-               void (*free_files)(List))
+               int    (*filter)   (struct dir_item *),
+               char **(*get_list) (const char *),
+               void   (*free_list)(void *))
 {
-    List files, file;
+    char **list;
     Array items = NULL;
 
-    assert((list_files && free_files) || (!list_files && !free_files));
+    assert((get_list && free_list) || (!get_list && !free_list));
 
-    if (!list_files) list_files = dir_list_files;
-    if (!free_files) free_files = dir_list_free;
+    if (!get_list)
+        get_list = get_dir_list;
 
-    items = array_new(sizeof (struct dir_item));
+    if (!free_list)
+        free_list = free_dir_list;
 
-    if ((files = list_files(path)))
+    if ((list = get_list(path)))
     {
-        for (file = files; file; file = file->next)
+        char **file = list;
+
+        items = array_new(sizeof (struct dir_item));
+
+        while (*file)
         {
             struct dir_item *item;
 
-            item = add_item(items, path, file->data);
+            item = add_item(items, path, *file);
 
             if (filter && !filter(item))
                 del_item(items);
+
+            file++;
         }
 
-        free_files(files);
+        free_list(list);
     }
 
     return items;
 }
 
-/*
- * Free the Array of struct dir_item.
- */
 void dir_free(Array items)
 {
     while (array_len(items))
         del_item(items);
 
     array_free(items);
-}
-
-/*
- * Test existence of a system directory.
- */
-int dir_exists(const char *path)
-{
-    DIR *dir;
-
-    if ((dir = opendir(path)))
-    {
-        closedir(dir);
-        return 1;
-    }
-    return 0;
 }

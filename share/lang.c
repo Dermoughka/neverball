@@ -21,24 +21,19 @@
 
 #include "lang.h"
 #include "common.h"
-#include "config.h"
 #include "base_config.h"
 #include "fs.h"
-#include "log.h"
 
 /*---------------------------------------------------------------------------*/
 
-#define GT_CODESET "UTF-8"
+#define DEFAULT_CODESET "UTF-8"
 
-void gt_init(const char *domain, const char *pref)
+/*---------------------------------------------------------------------------*/
+
+void lang_init(const char *domain)
 {
 #if ENABLE_NLS
-    static char default_lang[MAXSTR];
-    static int  default_lang_init;
-
     char *dir = strdup(getenv("NEVERBALL_LOCALE"));
-
-    /* Select the location of message catalogs. */
 
     if (!dir)
     {
@@ -48,41 +43,20 @@ void gt_init(const char *domain, const char *pref)
             dir = concat_string(fs_base_dir(), "/", CONFIG_LOCALE, NULL);
     }
 
-    /* Set up locale. */
-
     errno = 0;
 
     if (!setlocale(LC_ALL, ""))
     {
-        log_printf("Failure to set LC_ALL to native locale (%s)\n",
-                   errno ? strerror(errno) : "Unknown error");
+        fprintf(stderr, "Failed to set LC_ALL to native locale: %s\n",
+                errno ? strerror(errno) : "Unknown error");
     }
 
     /* The C locale is guaranteed (sort of) to be available. */
 
     setlocale(LC_NUMERIC, "C");
 
-    /* Tell gettext of our language preference. */
-
-    if (!default_lang_init)
-    {
-        const char *env;
-
-        if ((env = getenv("LANGUAGE")))
-            SAFECPY(default_lang, env);
-
-        default_lang_init = 1;
-    }
-
-    if (pref && *pref)
-        set_env_var("LANGUAGE", pref);
-    else
-        set_env_var("LANGUAGE", default_lang);
-
-    /* Set up gettext. */
-
     bindtextdomain(domain, dir);
-    bind_textdomain_codeset(domain, GT_CODESET);
+    bind_textdomain_codeset(domain, DEFAULT_CODESET);
     textdomain(domain);
 
     free(dir);
@@ -91,7 +65,7 @@ void gt_init(const char *domain, const char *pref)
 #endif
 }
 
-const char *gt_prefix(const char *msgid)
+const char *sgettext(const char *msgid)
 {
 #if ENABLE_NLS
     const char *msgval = gettext(msgid);
@@ -108,143 +82,19 @@ const char *gt_prefix(const char *msgid)
     return msgval;
 }
 
-/*---------------------------------------------------------------------------*/
-
-const char *lang_path(const char *code)
+const char *get_local_text(const char *msgid)
 {
-    static char path[MAXSTR];
+#if ENABLE_NLS
+    char *msgstr, *domain = textdomain(NULL);
 
-    SAFECPY(path, "lang/");
-    SAFECAT(path, code);
-    SAFECAT(path, ".txt");
+    bind_textdomain_codeset(domain, "");
+    msgstr = gettext(msgid);
+    bind_textdomain_codeset(domain, DEFAULT_CODESET);
 
-    return path;
-}
-
-const char *lang_code(const char *path)
-{
-    return base_name_sans(path, ".txt");
-}
-
-int lang_load(struct lang_desc *desc, const char *path)
-{
-    if (desc && path && *path)
-    {
-        fs_file fp;
-
-        memset(desc, 0, sizeof (*desc));
-
-        if ((fp = fs_open_read(path)))
-        {
-            char buf[MAXSTR];
-
-            SAFECPY(desc->code, base_name_sans(path, ".txt"));
-
-            while (fs_gets(buf, sizeof (buf), fp))
-            {
-                strip_newline(buf);
-
-                if (str_starts_with(buf, "name1 "))
-                    SAFECPY(desc->name1, buf + 6);
-                else if (str_starts_with(buf, "name2 "))
-                    SAFECPY(desc->name2, buf + 6);
-                else if (str_starts_with(buf, "font "))
-                    SAFECPY(desc->font, buf + 5);
-            }
-
-            fs_close(fp);
-
-            if (*desc->name1)
-                return 1;
-        }
-    }
-    return 0;
-}
-
-void lang_free(struct lang_desc *desc)
-{
-}
-
-/*---------------------------------------------------------------------------*/
-
-static int scan_item(struct dir_item *item)
-{
-    if (str_ends_with(item->path, ".txt"))
-    {
-        struct lang_desc *desc;
-
-        if ((desc = calloc(1, sizeof (*desc))))
-        {
-            if (lang_load(desc, item->path))
-            {
-                item->data = desc;
-                return 1;
-            }
-
-            free(desc);
-        }
-    }
-    return 0;
-}
-
-static void free_item(struct dir_item *item)
-{
-    if (item && item->data)
-    {
-        lang_free(item->data);
-
-        free(item->data);
-        item->data = NULL;
-    }
-}
-
-static int cmp_items(const void *A, const void *B)
-{
-    const struct dir_item *a = A, *b = B;
-    return strcmp(a->path, b->path);
-}
-
-Array lang_dir_scan(void)
-{
-    Array items;
-
-    if ((items = fs_dir_scan("lang", scan_item)))
-        array_sort(items, cmp_items);
-
-    return items;
-}
-
-void lang_dir_free(Array items)
-{
-    int i;
-
-    for (i = 0; i < array_len(items); i++)
-        free_item(array_get(items, i));
-
-    dir_free(items);
-}
-
-/*---------------------------------------------------------------------------*/
-
-struct lang_desc curr_lang;
-
-static int lang_status;
-
-void lang_init(void)
-{
-    lang_quit();
-    lang_load(&curr_lang, lang_path(config_get_s(CONFIG_LANGUAGE)));
-    gt_init("neverball", curr_lang.code);
-    lang_status = 1;
-}
-
-void lang_quit(void)
-{
-    if (lang_status)
-    {
-        lang_free(&curr_lang);
-        lang_status = 0;
-    }
+    return msgstr;
+#else
+    return msgid;
+#endif
 }
 
 /*---------------------------------------------------------------------------*/

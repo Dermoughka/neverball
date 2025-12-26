@@ -12,211 +12,66 @@
  * General Public License for more details.
  */
 
-#ifdef __EMSCRIPTEN__
-#include <gl4esinit.h>
-#endif
-
-#include <SDL.h>
-
 #include "video.h"
-#include "common.h"
-#include "image.h"
 #include "vec3.h"
 #include "glext.h"
 #include "config.h"
-#include "gui.h"
-#include "hmd.h"
-#include "log.h"
-
-extern const char TITLE[];
-extern const char ICON[];
-
-struct video video;
+#include "syswm.h"
 
 /*---------------------------------------------------------------------------*/
 
-/* Normally...... show the system cursor and hide the virtual cursor.        */
-/* In HMD mode... show the virtual cursor and hide the system cursor.        */
-
-void video_show_cursor(void)
+int video_init(const char *title, const char *icon)
 {
-    if (hmd_stat())
+    SDL_QuitSubSystem(SDL_INIT_VIDEO);
+
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) == -1)
     {
-        gui_set_cursor(1);
-        SDL_ShowCursor(SDL_DISABLE);
+        fprintf(stderr, "%s\n", SDL_GetError());
+        return 0;
     }
-    else
-    {
-        gui_set_cursor(0);
-        SDL_ShowCursor(SDL_ENABLE);
-    }
-}
 
-/* When the cursor is to be hidden, make sure neither the virtual cursor     */
-/* nor the system cursor is visible.                                         */
+    /* This has to happen before mode setting... */
 
-void video_hide_cursor(void)
-{
-    gui_set_cursor(0);
-    SDL_ShowCursor(SDL_DISABLE);
-}
+    set_SDL_icon(icon);
 
-/*---------------------------------------------------------------------------*/
+    /* Initialize the video. */
 
-static char snapshot_path[MAXSTR] = "";
-
-static void snapshot_init(void)
-{
-    snapshot_path[0] = 0;
-}
-
-static void snapshot_prep(const char *path)
-{
-    if (path && *path)
-        SAFECPY(snapshot_path, path);
-}
-
-static void snapshot_take(void)
-{
-    if (snapshot_path[0])
-    {
-        image_snap(snapshot_path);
-        snapshot_path[0] = 0;
-    }
-}
-
-void video_snap(const char *path)
-{
-    snapshot_prep(path);
-}
-
-/*---------------------------------------------------------------------------*/
-
-static SDL_Window    *window;
-static SDL_GLContext  context;
-
-static void set_window_title(const char *title)
-{
-    SDL_SetWindowTitle(window, title);
-}
-
-static void set_window_icon(const char *filename)
-{
-#if !defined(__APPLE__)
-    SDL_Surface *icon;
-
-    if ((icon = load_surface(filename)))
-    {
-        SDL_SetWindowIcon(window, icon);
-        free(icon->pixels);
-        SDL_FreeSurface(icon);
-    }
-#endif
-    return;
-}
-
-/*
- * Enter/exit fullscreen mode.
- */
-int video_fullscreen(int f)
-{
-    int code = SDL_SetWindowFullscreen(window, f ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-
-    if (code == 0)
-        config_set_d(CONFIG_FULLSCREEN, f ? 1 : 0);
-    else
-        log_printf("Failure to %s fullscreen (%s)\n", f ? "enter"  : "exit", SDL_GetError());
-
-    return (code == 0);
-}
-
-/*
- * Handle a window resize event.
- */
-void video_resize(int window_w, int window_h)
-{
-    if (window)
-    {
-        /* Update window size (for mouse events). */
-
-        video.window_w = window_w;
-        video.window_h = window_h;
-
-        /* User experience thing: don't save fullscreen size to config. */
-
-        if (!config_get_d(CONFIG_FULLSCREEN))
-        {
-            config_set_d(CONFIG_WIDTH, video.window_w);
-            config_set_d(CONFIG_HEIGHT, video.window_h);
-        }
-
-        /* Update drawable size (for rendering). */
-
-        SDL_GL_GetDrawableSize(window, &video.device_w, &video.device_h);
-
-        video.device_scale = (float) video.device_h / (float) video.window_h;
-
-        /* Update viewport. */
-
-        glViewport(0, 0, video.device_w, video.device_h);
-    }
-}
-
-void video_set_window_size(int w, int h)
-{
-    /*
-     * On Emscripten, SDL_SetWindowSize does all of these:
-     *
-     *   1) updates SDL's cached window->w and window->h values
-     *   2) updates canvas.width and canvas.height (drawing buffer size)
-     *   3) triggers a SDL_WINDOWEVENT_SIZE_CHANGED event, which updates our viewport/UI.
-     */
-
-    /*
-     * BTW, for this to work with element.requestFullscreen(),
-     * a change needs to be applied to the SDL2 Emscripten port:
-     * https://github.com/emscripten-ports/SDL2/issues/138
-     */
-
-    SDL_SetWindowSize(window, w, h);
-}
-
-int video_display(void)
-{
-    if (window)
-        return SDL_GetWindowDisplayIndex(window);
-    else
-        return -1;
-}
-
-int video_init(void)
-{
     if (!video_mode(config_get_d(CONFIG_FULLSCREEN),
                     config_get_d(CONFIG_WIDTH),
                     config_get_d(CONFIG_HEIGHT)))
     {
-        log_printf("Failure to create window (%s)\n", SDL_GetError());
+        fprintf(stderr, "%s\n", SDL_GetError());
         return 0;
     }
+
+    /* ...and this has to happen after it. */
+
+    set_EWMH_icon(icon);
+
+    SDL_WM_SetCaption(title, title);
 
     return 1;
 }
 
-void video_quit(void)
+/*---------------------------------------------------------------------------*/
+
+int check_extension(const char *needle)
 {
-    if (context)
+    const GLubyte *haystack, *c;
+
+    /* Search for the given string in the OpenGL extension strings. */
+
+    for (haystack = glGetString(GL_EXTENSIONS); *haystack; haystack++)
     {
-        SDL_GL_DeleteContext(context);
-        context = NULL;
+        for (c = (const GLubyte *) needle; *c && *haystack; c++, haystack++)
+            if (*c != *haystack)
+                break;
+
+        if ((*c == 0) && (*haystack == ' ' || *haystack == '\0'))
+            return 1;
     }
 
-    if (window)
-    {
-        SDL_DestroyWindow(window);
-        window = NULL;
-    }
-
-    hmd_free();
+    return 0;
 }
 
 int video_mode(int f, int w, int h)
@@ -226,28 +81,12 @@ int video_mode(int f, int w, int h)
     int buffers = config_get_d(CONFIG_MULTISAMPLE) ? 1 : 0;
     int samples = config_get_d(CONFIG_MULTISAMPLE);
     int vsync   = config_get_d(CONFIG_VSYNC)       ? 1 : 0;
-    int hmd     = config_get_d(CONFIG_HMD)         ? 1 : 0;
-    int highdpi = config_get_d(CONFIG_HIGHDPI)     ? 1 : 0;
-
-    int dpy = config_get_d(CONFIG_DISPLAY);
-
-    int X = SDL_WINDOWPOS_CENTERED_DISPLAY(dpy);
-    int Y = SDL_WINDOWPOS_CENTERED_DISPLAY(dpy);
-
-    hmd_free();
-
-    video_quit();
-
-#if ENABLE_OPENGLES
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 1);
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-#endif
 
     SDL_GL_SetAttribute(SDL_GL_STEREO,             stereo);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE,       stencil);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, buffers);
     SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, samples);
+    SDL_GL_SetAttribute(SDL_GL_SWAP_CONTROL,       vsync);
 
     /* Require 16-bit double buffer with 16-bit depth buffer. */
 
@@ -259,109 +98,41 @@ int video_mode(int f, int w, int h)
 
     /* Try to set the currently specified mode. */
 
-    log_printf("Creating a window (%dx%d, %s)\n",
-               w, h, (f ? "fullscreen" : "windowed"));
-
-    window = SDL_CreateWindow("", X, Y, w, h,
-                              SDL_WINDOW_OPENGL |
-                              (highdpi ? SDL_WINDOW_ALLOW_HIGHDPI : 0) |
-#ifndef __EMSCRIPTEN__
-                              (f ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0) |
-                              SDL_WINDOW_RESIZABLE |
-#endif
-			      0);
-
-    if (window)
+    if (SDL_SetVideoMode(w, h, 0, SDL_OPENGL | (f ? SDL_FULLSCREEN : 0)))
     {
-        if ((context = SDL_GL_CreateContext(window)))
-        {
-            int buf, smp;
-#ifdef __EMSCRIPTEN__
-            /* Weird hack to force gl4es to get MAX_TEXTURE_SIZE from WebGL. */
-            extern void *emscripten_GetProcAddress(const char *name);
-            set_getprocaddress(emscripten_GetProcAddress);
-
-            initialize_gl4es();
-#endif
-
-            SDL_GL_GetAttribute(SDL_GL_MULTISAMPLEBUFFERS, &buf);
-            SDL_GL_GetAttribute(SDL_GL_MULTISAMPLESAMPLES, &smp);
-
-            /*
-             * Work around SDL+WGL returning pixel formats below
-             * minimum specifications instead of failing, thus
-             * bypassing our fallback path. SDL tries to ensure that
-             * WGL plays by the rules, but forgets about extended
-             * context attributes such as multisample. See SDL
-             * Bugzilla #77.
-             */
-
-            if (buf < buffers || smp < samples)
-            {
-                log_printf("GL context does not meet minimum specifications\n");
-                SDL_GL_DeleteContext(context);
-                context = NULL;
-            }
-        }
-    }
-
-    if (window && context)
-    {
-        set_window_title(TITLE);
-        set_window_icon(ICON);
-
-        config_set_d(CONFIG_DISPLAY,    video_display());
         config_set_d(CONFIG_FULLSCREEN, f);
+        config_set_d(CONFIG_WIDTH,      w);
+        config_set_d(CONFIG_HEIGHT,     h);
 
-        SDL_GL_SetSwapInterval(vsync);
-
-        if (!glext_init())
-            return 0;
-
-        video_resize(w, h);
-
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glViewport(0, 0, w, h);
+        glClearColor(0.0f, 0.0f, 0.1f, 0.0f);
 
         glEnable(GL_NORMALIZE);
         glEnable(GL_CULL_FACE);
         glEnable(GL_DEPTH_TEST);
         glEnable(GL_TEXTURE_2D);
+        glEnable(GL_LIGHTING);
         glEnable(GL_BLEND);
 
-#if !ENABLE_OPENGLES
         glLightModeli(GL_LIGHT_MODEL_COLOR_CONTROL,
                       GL_SEPARATE_SPECULAR_COLOR);
-#endif
-
-        glPixelStorei(GL_PACK_ALIGNMENT, 1);
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+        glLightModeli(GL_LIGHT_MODEL_LOCAL_VIEWER, 1);
 
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         glDepthFunc(GL_LEQUAL);
 
         /* If GL supports multisample, and SDL got a multisample buffer... */
 
-        if (glext_check("ARB_multisample"))
+#ifdef GL_ARB_multisample
+        if (check_extension("ARB_multisample"))
         {
             SDL_GL_GetAttribute(SDL_GL_MULTISAMPLEBUFFERS, &buffers);
-            if (buffers) glEnable(GL_MULTISAMPLE);
+            if (buffers)
+                glEnable(GL_MULTISAMPLE_ARB);
         }
+#endif
 
-        /* Set up HMD display if requested. */
-
-        if (hmd)
-            hmd_init();
-
-        /* Initialize screen snapshotting. */
-
-        snapshot_init();
-
-        video_show_cursor();
-
-        /* Grab input immediately in HMD mode. */
-
-        if (hmd_stat())
-            SDL_SetWindowGrab(window, SDL_TRUE);
+        glReadBuffer(GL_FRONT);
 
         return 1;
     }
@@ -412,14 +183,7 @@ void video_swap(void)
 {
     int dt;
 
-    if (hmd_stat())
-        hmd_swap();
-
-    /* Take a screenshot of the complete back buffer and swap it. */
-
-    snapshot_take();
-
-    SDL_GL_SwapWindow(window);
+    SDL_GL_SwapBuffers();
 
     /* Accumulate time passed and frames rendered. */
 
@@ -452,7 +216,7 @@ void video_swap(void)
         /* Output statistics if configured. */
 
         if (config_get_d(CONFIG_STATS))
-            fprintf(stdout, "%4d %8.4f\n", fps, (double) ms);
+            fprintf(stdout, "%4d %8.4f\n", fps, ms);
     }
 }
 
@@ -466,30 +230,22 @@ void video_set_grab(int w)
     {
         SDL_EventState(SDL_MOUSEMOTION, SDL_IGNORE);
 
-        SDL_WarpMouseInWindow(window,
-                              video.window_w / 2,
-                              video.window_h / 2);
+        SDL_WarpMouse(config_get_d(CONFIG_WIDTH)  / 2,
+                      config_get_d(CONFIG_HEIGHT) / 2);
 
         SDL_EventState(SDL_MOUSEMOTION, SDL_ENABLE);
     }
 
-    SDL_SetRelativeMouseMode(SDL_TRUE);
-    SDL_SetWindowGrab(window, SDL_TRUE);
-    video_hide_cursor();
+    SDL_WM_GrabInput(SDL_GRAB_ON);
+    SDL_ShowCursor(SDL_DISABLE);
 
     grabbed = 1;
 }
 
 void video_clr_grab(void)
 {
-    SDL_SetRelativeMouseMode(SDL_FALSE);
-
-    /* Never release the grab in HMD mode. */
-
-    if (!hmd_stat())
-        SDL_SetWindowGrab(window, SDL_FALSE);
-
-    video_show_cursor();
+    SDL_WM_GrabInput(SDL_GRAB_OFF);
+    SDL_ShowCursor(SDL_ENABLE);
     grabbed = 0;
 }
 
@@ -500,93 +256,65 @@ int  video_get_grab(void)
 
 /*---------------------------------------------------------------------------*/
 
-void video_calc_view(float *M, const float *c,
-                               const float *p,
-                               const float *u)
-{
-    float x[3];
-    float y[3];
-    float z[3];
-
-    v_sub(z, p, c);
-    v_nrm(z, z);
-    v_crs(x, u, z);
-    v_nrm(x, x);
-    v_crs(y, z, x);
-
-    m_basis(M, x, y, z);
-}
-
-/*---------------------------------------------------------------------------*/
-
 void video_push_persp(float fov, float n, float f)
 {
-    if (hmd_stat())
-        hmd_persp(n, f);
-    else
+    GLdouble m[4][4];
+
+    GLdouble r = fov / 2 * V_PI / 180;
+    GLdouble s = sin(r);
+    GLdouble c = cos(r) / s;
+
+    GLdouble a = ((GLdouble) config_get_d(CONFIG_WIDTH) /
+                  (GLdouble) config_get_d(CONFIG_HEIGHT));
+
+    glMatrixMode(GL_PROJECTION);
     {
-        GLfloat m[4][4];
+        glPushMatrix();
+        glLoadIdentity();
 
-        GLfloat r = fov / 2 * V_PI / 180;
-        GLfloat s = fsinf(r);
-        GLfloat c = fcosf(r) / s;
+        m[0][0] =  c/a;
+        m[0][1] =  0.0;
+        m[0][2] =  0.0;
+        m[0][3] =  0.0;
+        m[1][0] =  0.0;
+        m[1][1] =    c;
+        m[1][2] =  0.0;
+        m[1][3] =  0.0;
+        m[2][0] =  0.0;
+        m[2][1] =  0.0;
+        m[2][2] = -(f + n) / (f - n);
+        m[2][3] = -1.0;
+        m[3][0] =  0.0;
+        m[3][1] =  0.0;
+        m[3][2] = -2.0 * n * f / (f - n);
+        m[3][3] =  0.0;
 
-        GLfloat a = ((GLfloat) video.device_w /
-                     (GLfloat) video.device_h);
-
-        glMatrixMode(GL_PROJECTION);
-        {
-            glLoadIdentity();
-
-            m[0][0] = c / a;
-            m[0][1] =  0.0f;
-            m[0][2] =  0.0f;
-            m[0][3] =  0.0f;
-            m[1][0] =  0.0f;
-            m[1][1] =     c;
-            m[1][2] =  0.0f;
-            m[1][3] =  0.0f;
-            m[2][0] =  0.0f;
-            m[2][1] =  0.0f;
-            m[2][2] = -(f + n) / (f - n);
-            m[2][3] = -1.0f;
-            m[3][0] =  0.0f;
-            m[3][1] =  0.0f;
-            m[3][2] = -2.0f * n * f / (f - n);
-            m[3][3] =  0.0f;
-
-            glMultMatrixf(&m[0][0]);
-        }
-        glMatrixMode(GL_MODELVIEW);
-        {
-            glLoadIdentity();
-        }
+        glMultMatrixd(&m[0][0]);
     }
+    glMatrixMode(GL_MODELVIEW);
 }
 
 void video_push_ortho(void)
 {
-    if (hmd_stat())
-        hmd_ortho();
-    else
-    {
-        GLfloat w = (GLfloat) video.device_w;
-        GLfloat h = (GLfloat) video.device_h;
+    GLdouble w = (GLdouble) config_get_d(CONFIG_WIDTH);
+    GLdouble h = (GLdouble) config_get_d(CONFIG_HEIGHT);
 
-        glMatrixMode(GL_PROJECTION);
-        {
-            glLoadIdentity();
-            glOrtho_(0.0, w, 0.0, h, -1.0, +1.0);
-        }
-        glMatrixMode(GL_MODELVIEW);
-        {
-            glLoadIdentity();
-        }
+    glMatrixMode(GL_PROJECTION);
+    {
+        glPushMatrix();
+        glLoadIdentity();
+        glOrtho(0.0, w, 0.0, h, -1.0, +1.0);
     }
+    glMatrixMode(GL_MODELVIEW);
 }
 
 void video_pop_matrix(void)
 {
+    glMatrixMode(GL_PROJECTION);
+    {
+        glPopMatrix();
+    }
+    glMatrixMode(GL_MODELVIEW);
 }
 
 void video_clear(void)

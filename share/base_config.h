@@ -21,8 +21,13 @@
  */
 
 #include <stdio.h>
+#include <SDL_endian.h>
 
 /*---------------------------------------------------------------------------*/
+
+#ifndef VERSION
+#define VERSION "unknown"
+#endif
 
 #ifndef CONFIG_DATA
 #define CONFIG_DATA   "./data"        /* Game data directory */
@@ -53,6 +58,18 @@
 
 /*---------------------------------------------------------------------------*/
 
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+#define RMASK 0xFF000000
+#define GMASK 0x00FF0000
+#define BMASK 0x0000FF00
+#define AMASK 0x000000FF
+#else
+#define RMASK 0x000000FF
+#define GMASK 0x0000FF00
+#define BMASK 0x00FF0000
+#define AMASK 0xFF000000
+#endif
+
 #ifdef _WIN32
 #define FMODE_RB "rb"
 #define FMODE_WB "wb"
@@ -64,10 +81,15 @@
 #define AUDIO_BUFF_HI 2048
 #define AUDIO_BUFF_LO 1024
 
-#define JOY_VALUE(k) ((float) (k) / ((k) < 0 ? 32768 : 32767))
+#define JOY_MAX 32767
+#define JOY_MID 16383
 
 #define MAXSTR 256
 #define PATHMAX 64
+#define MAXNAM 9
+
+#define UPS 90
+#define DT  (1.0f / (float) UPS)
 
 /*---------------------------------------------------------------------------*/
 

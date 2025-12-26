@@ -13,14 +13,12 @@
  */
 
 #include "gui.h"
-#include "transition.h"
 #include "set.h"
 #include "progress.h"
 #include "audio.h"
 #include "config.h"
 #include "util.h"
 #include "common.h"
-#include "key.h"
 
 #include "game_common.h"
 
@@ -41,42 +39,45 @@ static int desc_id;
 
 static int do_init = 1;
 
-enum
-{
-    SET_SELECT = GUI_LAST
-};
-
-static int set_action(int tok, int val)
+static int set_action(int i)
 {
     audio_play(AUD_MENU, 1.0f);
 
-    switch (tok)
+    switch (i)
     {
     case GUI_BACK:
         set_quit();
-        return exit_state(&st_title);
+        return goto_state(&st_title);
         break;
 
     case GUI_PREV:
 
         first -= SET_STEP;
+
         do_init = 0;
-        return exit_state(&st_set);
+        return goto_state(&st_set);
 
         break;
 
     case GUI_NEXT:
 
         first += SET_STEP;
+
         do_init = 0;
         return goto_state(&st_set);
 
         break;
 
-    case SET_SELECT:
-        set_goto(val);
-        return goto_state(&st_start);
+    case GUI_NULL:
+        return 1;
         break;
+
+    default:
+        if (set_exists(i))
+        {
+            set_goto(i);
+            return goto_state(&st_start);
+        }
     }
 
     return 1;
@@ -85,70 +86,20 @@ static int set_action(int tok, int val)
 static void gui_set(int id, int i)
 {
     if (set_exists(i))
-    {
-        int name_id;
-
-        if (i % SET_STEP == 0)
-            name_id = gui_start(id, "IJKLMNOPQRSTUVWXYZ", GUI_SML, SET_SELECT, i);
-        else
-            name_id = gui_state(id, "IJKLMNOPQRSTUVWXYZ", GUI_SML, SET_SELECT, i);
-
-        gui_set_trunc(name_id, TRUNC_TAIL);
-        gui_set_label(name_id, set_name(i));
-    }
+        gui_state(id, set_name(i), GUI_SML, i, 0);
     else
-        gui_label(id, "", GUI_SML, 0, 0);
+        gui_label(id, "", GUI_SML, GUI_ALL, 0, 0);
 }
 
-static int set_gui(void)
+static int set_enter(void)
 {
-    int w = video.device_w;
-    int h = video.device_h;
+    int w = config_get_d(CONFIG_WIDTH);
+    int h = config_get_d(CONFIG_HEIGHT);
 
-    int id, jd, kd, ld;
+    int id, jd, kd;
 
     int i;
 
-    if ((id = gui_vstack(0)))
-    {
-        if ((jd = gui_hstack(id)))
-        {
-            gui_label(jd, _("Level Set"), GUI_SML, gui_yel, gui_red);
-            gui_filler(jd);
-            gui_navig(jd, total, first, SET_STEP);
-        }
-
-        if ((jd = gui_vstack(id)))
-        {
-            gui_space(jd);
-
-            if ((kd = gui_harray(jd)))
-            {
-                const int ww = MIN(w, h) * 7 / 12;
-                const int hh = ww / 4 * 3;
-
-                shot_id = gui_image(kd, set_shot(first), ww, hh);
-
-                if ((ld = gui_varray(kd)))
-                {
-                    for (i = first; i < first + SET_STEP; i++)
-                        gui_set(ld, i);
-                }
-            }
-
-            gui_space(jd);
-
-            desc_id = gui_multi(jd, " \n \n \n \n \n", GUI_SML, gui_yel, gui_wht);
-        }
-
-        gui_layout(id, 0, 0);
-    }
-
-    return id;
-}
-
-static int set_enter(struct state *st, struct state *prev, int intent)
-{
     if (do_init)
     {
         total = set_init();
@@ -159,18 +110,35 @@ static int set_enter(struct state *st, struct state *prev, int intent)
     }
     else do_init = 1;
 
-    if (prev == &st_set)
-        return transition_page(set_gui(), 1, intent);
+    if ((id = gui_vstack(0)))
+    {
+        if ((jd = gui_hstack(id)))
+        {
+            gui_label(jd, _("Level Set"), GUI_SML, GUI_ALL, gui_yel, gui_red);
+            gui_filler(jd);
+            gui_navig(jd, first > 0, first + SET_STEP < total);
+        }
 
-    return transition_slide(set_gui(), 1, intent);
-}
+        gui_space(id);
 
-static int set_leave(struct state *st, struct state *next, int id, int intent)
-{
-    if (next == &st_set)
-        return transition_page(id, 0, intent);
+        if ((jd = gui_harray(id)))
+        {
+            shot_id = gui_image(jd, set_shot(first), 7 * w / 16, 7 * h / 16);
 
-    return transition_slide(id, 0, intent);
+            if ((kd = gui_varray(jd)))
+            {
+                for (i = first; i < first + SET_STEP; i++)
+                    gui_set(kd, i);
+            }
+        }
+
+        gui_space(id);
+        desc_id = gui_multi(id, " \\ \\ \\ \\ \\", GUI_SML, GUI_ALL,
+                            gui_yel, gui_wht);
+
+        gui_layout(id, 0, 0);
+    }
+    return id;
 }
 
 static void set_over(int i)
@@ -182,43 +150,27 @@ static void set_over(int i)
 static void set_point(int id, int x, int y, int dx, int dy)
 {
     int jd = shared_point_basic(id, x, y);
-
-    if (jd && gui_token(jd) == SET_SELECT)
-        set_over(gui_value(jd));
+    int i  = gui_token(jd);
+    if (jd && set_exists(i))
+        set_over(i);
 }
 
-static void set_stick(int id, int a, float v, int bump)
+static void set_stick(int id, int a, int v)
 {
-    int jd = shared_stick_basic(id, a, v, bump);
-
-    if (jd && gui_token(jd) == SET_SELECT)
-        set_over(gui_value(jd));
-}
-
-static int set_keybd(int c, int d)
-{
-    if (d)
-    {
-        if (c == KEY_EXIT)
-            return set_action(GUI_BACK, 0);
-    }
-    return 1;
+    int jd = shared_stick_basic(id, a, v);
+    int i  = gui_token(jd);
+    if (jd && set_exists(i))
+        set_over(i);
 }
 
 static int set_buttn(int b, int d)
 {
     if (d)
     {
-        int active = gui_active();
-
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
-            return set_action(gui_token(active), gui_value(active));
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return set_action(GUI_BACK, 0);
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_L1, b) && first > 0)
-            return set_action(GUI_PREV, 0);
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_R1, b) && first + SET_STEP < total)
-            return set_action(GUI_NEXT, 0);
+            return set_action(gui_token(gui_click()));
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return set_action(GUI_BACK);
     }
     return 1;
 }
@@ -227,13 +179,14 @@ static int set_buttn(int b, int d)
 
 struct state st_set = {
     set_enter,
-    set_leave,
+    shared_leave,
     shared_paint,
     shared_timer,
     set_point,
     set_stick,
     shared_angle,
     shared_click,
-    set_keybd,
-    set_buttn
+    NULL,
+    set_buttn,
+    1, 0
 };

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2009 Neverball authors
+ * Copyright (C) 2009 Neverball contributors
  *
  * NEVERBALL is  free software; you can redistribute  it and/or modify
  * it under the  terms of the GNU General  Public License as published
@@ -42,22 +42,22 @@ static int cmd_stats = 0;
  * for examples.)
  */
 
-#define PUT_FUNC(type, bytes)                                           \
-    static void cmd_put_ ## type(fs_file fp, const union cmd *cmd) {    \
-    const char *cmd_name = #type;                                       \
+#define PUT_FUNC(t)                                                     \
+    static void cmd_put_ ## t(fs_file fp, const union cmd *cmd) {       \
+    const char *cmd_name = #t;                                          \
                                                                         \
     /* This is a write, so BYTES should be safe to eval already. */     \
-    short cmd_bytes = (bytes);                                            \
+    short cmd_bytes = BYTES;                                            \
                                                                         \
     /* Write command size info (right after the command type). */       \
-    put_short(fp, cmd_bytes);                                           \
+    put_short(fp, &cmd_bytes);                                          \
                                                                         \
     /* Start the stats output. */                                       \
     if (cmd_stats) printf("put");                                       \
 
-#define GET_FUNC(type, bytes)                                   \
-    static void cmd_get_ ## type(fs_file fp, union cmd *cmd) {  \
-    const char *cmd_name = #type;                               \
+#define GET_FUNC(t)                                             \
+    static void cmd_get_ ## t(fs_file fp, union cmd *cmd) {     \
+    const char *cmd_name = #t;                                  \
                                                                 \
     /* This is a read, so we'll have to eval BYTES later. */    \
     short cmd_bytes = -1;                                       \
@@ -65,305 +65,529 @@ static int cmd_stats = 0;
     /* Start the stats output. */                               \
     if (cmd_stats) printf("get");
 
-#define END_FUNC(bytes)                                                 \
-    if (cmd_bytes < 0) cmd_bytes = (bytes);                             \
+#define END_FUNC                                                        \
+    if (cmd_bytes < 0) cmd_bytes = BYTES;                               \
                                                                         \
     /* Finish the stats output. */                                      \
     if (cmd_stats) printf("\t%s\t%d\n", cmd_name, cmd_bytes);           \
     } struct dummy              /* Allows a trailing semi-colon. */
 
-#define DEFINE_CMD(type, bytes, put_func_body, get_func_body) \
-    PUT_FUNC(type, bytes) \
-    put_func_body \
-    END_FUNC(bytes); \
-    GET_FUNC(type, bytes) \
-    get_func_body \
-    END_FUNC(bytes)
+/*---------------------------------------------------------------------------*/
+
+#undef BYTES
+#define BYTES 0
+
+PUT_FUNC(CMD_END_OF_UPDATE) { } END_FUNC;
+GET_FUNC(CMD_END_OF_UPDATE) { } END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_END_OF_UPDATE, 0, {}, {});
+#undef BYTES
+#define BYTES 0
+
+PUT_FUNC(CMD_MAKE_BALL) { } END_FUNC;
+GET_FUNC(CMD_MAKE_BALL) { } END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_MAKE_BALL, 0, {}, {});
+#undef BYTES
+#define BYTES (ARRAY_BYTES(3) + INDEX_BYTES + INDEX_BYTES)
 
-/*---------------------------------------------------------------------------*/
-
-DEFINE_CMD(CMD_MAKE_ITEM, ARRAY_BYTES(3) + INDEX_BYTES + INDEX_BYTES, {
+PUT_FUNC(CMD_MAKE_ITEM)
+{
     put_array(fp, cmd->mkitem.p, 3);
-    put_index(fp, cmd->mkitem.t);
-    put_index(fp, cmd->mkitem.n);
-}, {
+    put_index(fp, &cmd->mkitem.t);
+    put_index(fp, &cmd->mkitem.n);
+}
+END_FUNC;
+
+GET_FUNC(CMD_MAKE_ITEM)
+{
     get_array(fp, cmd->mkitem.p, 3);
-
-    cmd->mkitem.t = get_index(fp);
-    cmd->mkitem.n = get_index(fp);
-});
-
-/*---------------------------------------------------------------------------*/
-
-DEFINE_CMD(CMD_PICK_ITEM, INDEX_BYTES, {
-    put_index(fp, cmd->pkitem.hi);
-}, {
-    cmd->pkitem.hi = get_index(fp);
-});
+    get_index(fp, &cmd->mkitem.t);
+    get_index(fp, &cmd->mkitem.n);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_TILT_ANGLES, FLOAT_BYTES + FLOAT_BYTES, {
-    put_float(fp, cmd->tiltangles.x);
-    put_float(fp, cmd->tiltangles.z);
-}, {
-    cmd->tiltangles.x = get_float(fp);
-    cmd->tiltangles.z = get_float(fp);
-});
+#undef BYTES
+#define BYTES INDEX_BYTES
+
+PUT_FUNC(CMD_PICK_ITEM)
+{
+    put_index(fp, &cmd->pkitem.hi);
+}
+END_FUNC;
+
+GET_FUNC(CMD_PICK_ITEM)
+{
+    get_index(fp, &cmd->pkitem.hi);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_SOUND, STRING_BYTES(cmd->sound.n) + FLOAT_BYTES, {
+#undef BYTES
+#define BYTES (FLOAT_BYTES + FLOAT_BYTES)
+
+PUT_FUNC(CMD_TILT_ANGLES)
+{
+    put_float(fp, &cmd->tiltangles.x);
+    put_float(fp, &cmd->tiltangles.z);
+}
+END_FUNC;
+
+GET_FUNC(CMD_TILT_ANGLES)
+{
+    get_float(fp, &cmd->tiltangles.x);
+    get_float(fp, &cmd->tiltangles.z);
+}
+END_FUNC;
+
+/*---------------------------------------------------------------------------*/
+
+#undef BYTES
+#define BYTES (STRING_BYTES(cmd->sound.n) + FLOAT_BYTES)
+
+PUT_FUNC(CMD_SOUND)
+{
     put_string(fp, cmd->sound.n);
-    put_float(fp, cmd->sound.a);
-}, {
+    put_float(fp, &cmd->sound.a);
+}
+END_FUNC;
+
+GET_FUNC(CMD_SOUND)
+{
     static char buff[MAXSTR];
 
     get_string(fp, buff, sizeof (buff));
+    get_float(fp, &cmd->sound.a);
 
-    cmd->sound.a = get_float(fp);
     cmd->sound.n = strdup(buff);
-});
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_TIMER, FLOAT_BYTES, {
-    put_float(fp, cmd->timer.t);
-}, {
-    cmd->timer.t = get_float(fp);
-});
+#undef BYTES
+#define BYTES FLOAT_BYTES
+
+PUT_FUNC(CMD_TIMER)
+{
+    put_float(fp, &cmd->timer.t);
+}
+END_FUNC;
+
+GET_FUNC(CMD_TIMER)
+{
+    get_float(fp, &cmd->timer.t);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_STATUS, INDEX_BYTES, {
-    put_index(fp, cmd->status.t);
-}, {
-    cmd->status.t = get_index(fp);
-});
+#undef BYTES
+#define BYTES INDEX_BYTES
+
+PUT_FUNC(CMD_STATUS)
+{
+    put_index(fp, &cmd->status.t);
+}
+END_FUNC;
+
+GET_FUNC(CMD_STATUS)
+{
+    get_index(fp, &cmd->status.t);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_COINS, INDEX_BYTES, {
-    put_index(fp, cmd->coins.n);
-}, {
-    cmd->coins.n = get_index(fp);
-});
+#undef BYTES
+#define BYTES INDEX_BYTES
+
+PUT_FUNC(CMD_COINS)
+{
+    put_index(fp, &cmd->coins.n);
+}
+END_FUNC;
+
+GET_FUNC(CMD_COINS)
+{
+    get_index(fp, &cmd->coins.n);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_JUMP_ENTER, 0, {}, {});
+#undef BYTES
+#define BYTES 0
+
+PUT_FUNC(CMD_JUMP_ENTER) { } END_FUNC;
+GET_FUNC(CMD_JUMP_ENTER) { } END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_JUMP_EXIT, 0, {}, {});
+#undef BYTES
+#define BYTES 0
+
+PUT_FUNC(CMD_JUMP_EXIT) { } END_FUNC;
+GET_FUNC(CMD_JUMP_EXIT) { } END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_BODY_PATH, INDEX_BYTES + INDEX_BYTES, {
-    put_index(fp, cmd->bodypath.bi);
-    put_index(fp, cmd->bodypath.pi);
-}, {
-    cmd->bodypath.bi = get_index(fp);
-    cmd->bodypath.pi = get_index(fp);
-});
+#undef BYTES
+#define BYTES (INDEX_BYTES + INDEX_BYTES)
+
+PUT_FUNC(CMD_BODY_PATH)
+{
+    put_index(fp, &cmd->bodypath.bi);
+    put_index(fp, &cmd->bodypath.pi);
+}
+END_FUNC;
+
+GET_FUNC(CMD_BODY_PATH)
+{
+    get_index(fp, &cmd->bodypath.bi);
+    get_index(fp, &cmd->bodypath.pi);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_BODY_TIME, INDEX_BYTES + FLOAT_BYTES, {
-    put_index(fp, cmd->bodytime.bi);
-    put_float(fp, cmd->bodytime.t);
-}, {
-    cmd->bodytime.bi = get_index(fp);
-    cmd->bodytime.t  = get_float(fp);
-});
+#undef BYTES
+#define BYTES (INDEX_BYTES + FLOAT_BYTES)
+
+PUT_FUNC(CMD_BODY_TIME)
+{
+    put_index(fp, &cmd->bodytime.bi);
+    put_float(fp, &cmd->bodytime.t);
+}
+END_FUNC;
+
+GET_FUNC(CMD_BODY_TIME)
+{
+    get_index(fp, &cmd->bodytime.bi);
+    get_float(fp, &cmd->bodytime.t);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_GOAL_OPEN, 0, {}, {});
+#undef BYTES
+#define BYTES 0
+
+PUT_FUNC(CMD_GOAL_OPEN) { } END_FUNC;
+GET_FUNC(CMD_GOAL_OPEN) { } END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_SWCH_ENTER, INDEX_BYTES, {
-    put_index(fp, cmd->swchenter.xi);
-}, {
-    cmd->swchenter.xi = get_index(fp);
-});
+#undef BYTES
+#define BYTES INDEX_BYTES
+
+PUT_FUNC(CMD_SWCH_ENTER)
+{
+    put_index(fp, &cmd->swchenter.xi);
+}
+END_FUNC;
+
+GET_FUNC(CMD_SWCH_ENTER)
+{
+    get_index(fp, &cmd->swchenter.xi);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_SWCH_TOGGLE, INDEX_BYTES, {
-    put_index(fp, cmd->swchtoggle.xi);
-}, {
-    cmd->swchtoggle.xi = get_index(fp);
-});
+#undef BYTES
+#define BYTES INDEX_BYTES
+
+PUT_FUNC(CMD_SWCH_TOGGLE)
+{
+    put_index(fp, &cmd->swchenter.xi);
+}
+END_FUNC;
+
+GET_FUNC(CMD_SWCH_TOGGLE)
+{
+    get_index(fp, &cmd->swchenter.xi);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_SWCH_EXIT, INDEX_BYTES, {
-    put_index(fp, cmd->swchexit.xi);
-}, {
-    cmd->swchexit.xi = get_index(fp);
-});
+#undef BYTES
+#define BYTES INDEX_BYTES
+
+PUT_FUNC(CMD_SWCH_EXIT)
+{
+    put_index(fp, &cmd->swchenter.xi);
+}
+END_FUNC;
+
+GET_FUNC(CMD_SWCH_EXIT)
+{
+    get_index(fp, &cmd->swchenter.xi);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_UPDATES_PER_SECOND, INDEX_BYTES, {
-    put_index(fp, cmd->ups.n);
-}, {
-    cmd->ups.n = get_index(fp);
-});
+#undef BYTES
+#define BYTES INDEX_BYTES
+
+PUT_FUNC(CMD_UPDATES_PER_SECOND)
+{
+    put_index(fp, &cmd->ups.n);
+}
+END_FUNC;
+
+GET_FUNC(CMD_UPDATES_PER_SECOND)
+{
+    get_index(fp, &cmd->ups.n);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_BALL_RADIUS, FLOAT_BYTES, {
-    put_float(fp, cmd->ballradius.r);
-}, {
-    cmd->ballradius.r = get_float(fp);
-});
+#undef BYTES
+#define BYTES FLOAT_BYTES
+
+PUT_FUNC(CMD_BALL_RADIUS)
+{
+    put_float(fp, &cmd->ballradius.r);
+}
+END_FUNC;
+
+GET_FUNC(CMD_BALL_RADIUS)
+{
+    get_float(fp, &cmd->ballradius.r);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_CLEAR_ITEMS, 0, {}, {});
+#undef BYTES
+#define BYTES 0
+
+PUT_FUNC(CMD_CLEAR_ITEMS) { } END_FUNC;
+GET_FUNC(CMD_CLEAR_ITEMS) { } END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_CLEAR_BALLS, 0, {}, {});
+#undef BYTES
+#define BYTES 0
+
+PUT_FUNC(CMD_CLEAR_BALLS) { } END_FUNC;
+GET_FUNC(CMD_CLEAR_BALLS) { } END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_BALL_POSITION, ARRAY_BYTES(3), {
+#undef BYTES
+#define BYTES ARRAY_BYTES(3)
+
+PUT_FUNC(CMD_BALL_POSITION)
+{
     put_array(fp, cmd->ballpos.p, 3);
-}, {
+}
+END_FUNC;
+
+GET_FUNC(CMD_BALL_POSITION)
+{
     get_array(fp, cmd->ballpos.p, 3);
-});
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_BALL_BASIS, ARRAY_BYTES(3) + ARRAY_BYTES(3), {
+#undef BYTES
+#define BYTES (ARRAY_BYTES(3) + ARRAY_BYTES(3))
+
+PUT_FUNC(CMD_BALL_BASIS)
+{
     put_array(fp, cmd->ballbasis.e[0], 3);
     put_array(fp, cmd->ballbasis.e[1], 3);
-}, {
+}
+END_FUNC;
+
+GET_FUNC(CMD_BALL_BASIS)
+{
     get_array(fp, cmd->ballbasis.e[0], 3);
     get_array(fp, cmd->ballbasis.e[1], 3);
-});
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_BALL_PEND_BASIS, ARRAY_BYTES(3) + ARRAY_BYTES(3), {
+#undef BYTES
+#define BYTES (ARRAY_BYTES(3) + ARRAY_BYTES(3))
+
+PUT_FUNC(CMD_BALL_PEND_BASIS)
+{
     put_array(fp, cmd->ballpendbasis.E[0], 3);
     put_array(fp, cmd->ballpendbasis.E[1], 3);
-}, {
+}
+END_FUNC;
+
+GET_FUNC(CMD_BALL_PEND_BASIS)
+{
     get_array(fp, cmd->ballpendbasis.E[0], 3);
     get_array(fp, cmd->ballpendbasis.E[1], 3);
-});
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_VIEW_POSITION, ARRAY_BYTES(3), {
+#undef BYTES
+#define BYTES ARRAY_BYTES(3)
+
+PUT_FUNC(CMD_VIEW_POSITION)
+{
     put_array(fp, cmd->viewpos.p, 3);
-}, {
+}
+END_FUNC;
+
+GET_FUNC(CMD_VIEW_POSITION)
+{
     get_array(fp, cmd->viewpos.p, 3);
-});
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_VIEW_CENTER, ARRAY_BYTES(3), {
+#undef BYTES
+#define BYTES ARRAY_BYTES(3)
+
+PUT_FUNC(CMD_VIEW_CENTER)
+{
     put_array(fp, cmd->viewcenter.c, 3);
-}, {
+}
+END_FUNC;
+
+GET_FUNC(CMD_VIEW_CENTER)
+{
     get_array(fp, cmd->viewcenter.c, 3);
-});
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_VIEW_BASIS, ARRAY_BYTES(3) + ARRAY_BYTES(3), {
+#undef BYTES
+#define BYTES (ARRAY_BYTES(3) + ARRAY_BYTES(3))
+
+PUT_FUNC(CMD_VIEW_BASIS)
+{
     put_array(fp, cmd->viewbasis.e[0], 3);
     put_array(fp, cmd->viewbasis.e[1], 3);
-}, {
+}
+END_FUNC;
+
+GET_FUNC(CMD_VIEW_BASIS)
+{
     get_array(fp, cmd->viewbasis.e[0], 3);
     get_array(fp, cmd->viewbasis.e[1], 3);
-});
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_CURRENT_BALL, INDEX_BYTES, {
-    put_index(fp, cmd->currball.ui);
-}, {
-    cmd->currball.ui = get_index(fp);
-});
+#undef BYTES
+#define BYTES INDEX_BYTES
+
+PUT_FUNC(CMD_CURRENT_BALL)
+{
+    put_index(fp, &cmd->currball.ui);
+}
+END_FUNC;
+
+GET_FUNC(CMD_CURRENT_BALL)
+{
+    get_index(fp, &cmd->currball.ui);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_PATH_FLAG, INDEX_BYTES + INDEX_BYTES, {
-    put_index(fp, cmd->pathflag.pi);
-    put_index(fp, cmd->pathflag.f);
-}, {
-    cmd->pathflag.pi = get_index(fp);
-    cmd->pathflag.f  = get_index(fp);
-});
+#undef BYTES
+#define BYTES (INDEX_BYTES + INDEX_BYTES)
+
+PUT_FUNC(CMD_PATH_FLAG)
+{
+    put_index(fp, &cmd->pathflag.pi);
+    put_index(fp, &cmd->pathflag.f);
+}
+END_FUNC;
+
+GET_FUNC(CMD_PATH_FLAG)
+{
+    get_index(fp, &cmd->pathflag.pi);
+    get_index(fp, &cmd->pathflag.f);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_STEP_SIMULATION, FLOAT_BYTES, {
-    put_float(fp, cmd->stepsim.dt);
-}, {
-    cmd->stepsim.dt = get_float(fp);
-});
+#undef BYTES
+#define BYTES FLOAT_BYTES
+
+PUT_FUNC(CMD_STEP_SIMULATION)
+{
+    put_float(fp, &cmd->stepsim.dt);
+}
+END_FUNC;
+
+GET_FUNC(CMD_STEP_SIMULATION)
+{
+    get_float(fp, &cmd->stepsim.dt);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_MAP, STRING_BYTES(cmd->map.name) + INDEX_BYTES * 2, {
+#undef BYTES
+#define BYTES STRING_BYTES(cmd->map.name) + INDEX_BYTES * 2
+
+PUT_FUNC(CMD_MAP)
+{
     put_string(fp, cmd->map.name);
 
-    put_index(fp, cmd->map.version.x);
-    put_index(fp, cmd->map.version.y);
-}, {
+    put_index(fp, &cmd->map.version.x);
+    put_index(fp, &cmd->map.version.y);
+}
+END_FUNC;
+
+GET_FUNC(CMD_MAP)
+{
     char buff[MAXSTR];
 
     get_string(fp, buff, sizeof (buff));
 
     cmd->map.name = strdup(buff);
 
-    cmd->map.version.x = get_index(fp);
-    cmd->map.version.y = get_index(fp);
-});
+    get_index(fp, &cmd->map.version.x);
+    get_index(fp, &cmd->map.version.y);
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
-DEFINE_CMD(CMD_TILT_AXES, ARRAY_BYTES(3) * 2, {
+#undef BYTES
+#define BYTES ARRAY_BYTES(3) * 2
+
+PUT_FUNC(CMD_TILT_AXES)
+{
     put_array(fp, cmd->tiltaxes.x, 3);
     put_array(fp, cmd->tiltaxes.z, 3);
-}, {
+}
+END_FUNC;
+
+GET_FUNC(CMD_TILT_AXES)
+{
     get_array(fp, cmd->tiltaxes.x, 3);
     get_array(fp, cmd->tiltaxes.z, 3);
-});
-
-/*---------------------------------------------------------------------------*/
-
-DEFINE_CMD(CMD_MOVE_PATH, INDEX_BYTES + INDEX_BYTES, {
-    put_index(fp, cmd->movepath.mi);
-    put_index(fp, cmd->movepath.pi);
-}, {
-    cmd->movepath.mi = get_index(fp);
-    cmd->movepath.pi = get_index(fp);
-});
-
-/*---------------------------------------------------------------------------*/
-
-DEFINE_CMD(CMD_MOVE_TIME, INDEX_BYTES + FLOAT_BYTES, {
-    put_index(fp, cmd->movetime.mi);
-    put_float(fp, cmd->movetime.t);
-}, {
-    cmd->movetime.mi = get_index(fp);
-    cmd->movetime.t  = get_float(fp);
-});
+}
+END_FUNC;
 
 /*---------------------------------------------------------------------------*/
 
@@ -413,8 +637,6 @@ int cmd_put(fs_file fp, const union cmd *cmd)
         PUT_CASE(CMD_STEP_SIMULATION);
         PUT_CASE(CMD_MAP);
         PUT_CASE(CMD_TILT_AXES);
-        PUT_CASE(CMD_MOVE_PATH);
-        PUT_CASE(CMD_MOVE_TIME);
 
     case CMD_NONE:
     case CMD_MAX:
@@ -434,7 +656,7 @@ int cmd_get(fs_file fp, union cmd *cmd)
 
     if ((type = fs_getc(fp)) >= 0)
     {
-        size = get_short(fp);
+        get_short(fp, &size);
 
         /* Discard unrecognised commands. */
 
@@ -480,8 +702,6 @@ int cmd_get(fs_file fp, union cmd *cmd)
             GET_CASE(CMD_STEP_SIMULATION);
             GET_CASE(CMD_MAP);
             GET_CASE(CMD_TILT_AXES);
-            GET_CASE(CMD_MOVE_PATH);
-            GET_CASE(CMD_MOVE_TIME);
 
         case CMD_NONE:
         case CMD_MAX:
@@ -491,30 +711,6 @@ int cmd_get(fs_file fp, union cmd *cmd)
         return !fs_eof(fp);
     }
     return 0;
-}
-
-/*---------------------------------------------------------------------------*/
-
-void cmd_free(union cmd *cmd)
-{
-    if (cmd)
-    {
-        switch (cmd->type)
-        {
-        case CMD_SOUND:
-            free(cmd->sound.n);
-            break;
-
-        case CMD_MAP:
-            free(cmd->map.name);
-            break;
-
-        default:
-            break;
-        }
-
-        free(cmd);
-    }
 }
 
 /*---------------------------------------------------------------------------*/

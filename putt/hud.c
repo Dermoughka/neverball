@@ -12,14 +12,13 @@
  * General Public License for more details.
  */
 
+#include <SDL.h>
 #include <math.h>
 
 #include "gui.h"
 #include "hud.h"
 #include "hole.h"
 #include "config.h"
-#include "video.h"
-#include "lang.h"
 
 /*---------------------------------------------------------------------------*/
 
@@ -31,7 +30,7 @@ static int fps_id;
 
 void hud_init(void)
 {
-    static const GLubyte *color[5] = {
+    static const float *color[5] = {
         gui_wht,
         gui_red,
         gui_grn,
@@ -42,23 +41,18 @@ void hud_init(void)
 
     if ((Lhud_id = gui_hstack(0)))
     {
-        gui_label(Lhud_id, curr_scr(), GUI_MED, color[i], gui_wht);
-        gui_label(Lhud_id, _("Score"), GUI_SML,  gui_wht,  gui_wht);
-        gui_set_rect(Lhud_id, GUI_NE);
+        gui_label(Lhud_id, curr_scr(), GUI_MED, GUI_NE, color[i], gui_wht);
+        gui_label(Lhud_id, _("Score"), GUI_SML, 0,      gui_wht,  gui_wht);
         gui_layout(Lhud_id, -1, -1);
     }
     if ((Rhud_id = gui_hstack(0)))
     {
-        gui_label(Rhud_id, curr_par(), GUI_MED,  color[i], gui_wht);
-        gui_label(Rhud_id, _("Par"),   GUI_SML, gui_wht,  gui_wht);
-        gui_set_rect(Rhud_id, GUI_NW);
+        gui_label(Rhud_id, curr_par(), GUI_MED, 0,      color[i], gui_wht);
+        gui_label(Rhud_id, _("Par"),   GUI_SML, GUI_NW, gui_wht,  gui_wht);
         gui_layout(Rhud_id, +1, -1);
     }
-    if ((fps_id = gui_count(0, 1000, GUI_SML)))
-    {
-        gui_set_rect(fps_id, GUI_SE);
+    if ((fps_id = gui_count(0, 1000, GUI_SML, GUI_SE)))
         gui_layout(fps_id, -1, +1);
-    }
 }
 
 void hud_free(void)
@@ -72,11 +66,24 @@ void hud_free(void)
 
 void hud_paint(void)
 {
-    if (config_get_d(CONFIG_FPS))
+    static int fps   = 0;
+    static int then  = 0;
+    static int count = 0;
+
+    int now = SDL_GetTicks();
+
+    if (now - then > 250)
     {
-        gui_set_count(fps_id, video_perf());
-        gui_paint(fps_id);
+        fps   = count * 1000 / (now - then);
+        then  = now;
+        count = 0;
+
+        gui_set_count(fps_id, fps);
     }
+    else count++;
+
+    if (config_get_d(CONFIG_FPS))
+        gui_paint(fps_id);
 
     gui_paint(Rhud_id);
     gui_paint(Lhud_id);

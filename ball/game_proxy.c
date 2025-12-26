@@ -1,17 +1,3 @@
-/*
- * Copyright (C) 2003-2010 Neverball authors
- *
- * NEVERBALL is  free software; you can redistribute  it and/or modify
- * it under the  terms of the GNU General  Public License as published
- * by the Free  Software Foundation; either version 2  of the License,
- * or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT  ANY  WARRANTY;  without   even  the  implied  warranty  of
- * MERCHANTABILITY or  FITNESS FOR A PARTICULAR PURPOSE.   See the GNU
- * General Public License for more details.
- */
-
 #include <stdlib.h>
 
 #include "game_proxy.h"
@@ -21,27 +7,11 @@
 static Queue cmd_queue;
 
 /*
- * Command filtering.
- */
-
-static int (*filter_fn)(const union cmd *);
-
-#define FILTER(cmd) (filter_fn ? filter_fn(cmd) : 1)
-
-void game_proxy_filter(int (*fn)(const union cmd *))
-{
-    filter_fn = fn;
-}
-
-/*
  * Enqueue SRC in the game's command queue.
  */
 void game_proxy_enq(const union cmd *src)
 {
     union cmd *dst;
-
-    if (!FILTER(src))
-        return;
 
     /*
      * Create the queue.  This is done only once during the life time
@@ -80,5 +50,5 @@ void game_proxy_clr(void)
     union cmd *cmdp;
 
     while ((cmdp = game_proxy_deq()))
-        cmd_free(cmdp);
+        free(cmdp);
 }

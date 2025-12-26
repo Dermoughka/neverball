@@ -13,70 +13,57 @@
  */
 
 #include "gui.h"
-#include "transition.h"
 #include "audio.h"
 #include "config.h"
 #include "demo.h"
-#include "video.h"
-#include "key.h"
+#include "keynames.h"
 
 #include "game_common.h"
 #include "game_server.h"
 #include "game_client.h"
 
+#include "st_shared.h"
 #include "st_title.h"
 #include "st_help.h"
-#include "st_shared.h"
 
 /*---------------------------------------------------------------------------*/
 
-enum
-{
-    HELP_PAGE = GUI_LAST,
-    HELP_DEMO
-};
+#define HELP_BACK   0
+#define HELP_RULE   1
+#define HELP_CONT   2
+#define HELP_MODE   3
+#define HELP_TECH   4
+#define HELP_DEMO_1 6
+#define HELP_DEMO_2 7
 
-enum
-{
-    PAGE_RULES,
-    PAGE_CONTROLS,
-    PAGE_MODES,
-    PAGE_TRICKS
-};
-
-static const char demos[][16] = {
-    "gui/demo1.nbr",
-    "gui/demo2.nbr"
-};
-
-static int page = PAGE_RULES;
+static int tab = HELP_RULE;
 
 /*---------------------------------------------------------------------------*/
 
-static int help_action(int tok, int val)
+static int help_action(int t)
 {
     audio_play(AUD_MENU, 1.0f);
 
-    switch (tok)
+    switch (t)
     {
-    case GUI_BACK:
-        page = PAGE_RULES;
-        return exit_state(&st_title);
+    case HELP_BACK:
+        tab = HELP_RULE;
+        return goto_state(&st_title);
+        break;
 
-    case HELP_DEMO:
-        if (demo_replay_init(demos[val], NULL, NULL, NULL, NULL, NULL))
+    case HELP_DEMO_1:
+        if (demo_replay_init("gui/demo1.nbr", NULL, NULL, NULL, NULL, NULL))
             return goto_state(&st_help_demo);
         break;
 
-    case HELP_PAGE:
-        if (val != page)
-        {
-            int old_page = page;
+    case HELP_DEMO_2:
+        if (demo_replay_init("gui/demo2.nbr", NULL, NULL, NULL, NULL, NULL))
+            return goto_state(&st_help_demo);
+        break;
 
-            page = val;
-
-            return page < old_page ? exit_state(&st_help) : goto_state(&st_help);
-        }
+    default:
+        tab = t;
+        return goto_state(&st_help);
         break;
     }
     return 1;
@@ -84,17 +71,12 @@ static int help_action(int tok, int val)
 
 /* -------------------------------------------------------------------------- */
 
-static int help_button(int id, const char *text, int token, int value)
+static int help_button(int id, const char *text, int token)
 {
-    int jd = gui_state(id, text, GUI_SML, token, value);
+    int jd = gui_state(id, text, GUI_SML, token, (token == tab));
 
-    /* Hilight current page. */
-
-    if (token == HELP_PAGE && value == page)
-    {
-        gui_set_hilite(jd, 1);
+    if (token == tab)
         gui_focus(jd);
-    }
 
     return jd;
 }
@@ -107,32 +89,32 @@ static int help_menu(int id)
 
     if ((jd = gui_harray(id)))
     {
-        help_button(jd, _("Tricks"),   HELP_PAGE, PAGE_TRICKS);
-        help_button(jd, _("Modes"),    HELP_PAGE, PAGE_MODES);
-        help_button(jd, _("Controls"), HELP_PAGE, PAGE_CONTROLS);
-        help_button(jd, _("Rules"),    HELP_PAGE, PAGE_RULES);
-        help_button(jd, _("Back"),     GUI_BACK, 0);
+        help_button(jd, _("Techniques"), HELP_TECH);
+        help_button(jd, _("Modes"),      HELP_MODE);
+        help_button(jd, _("Controls"),   HELP_CONT);
+        help_button(jd, _("Rules"),      HELP_RULE);
+        help_button(jd, _("Back"),       HELP_BACK);
     }
     return jd;
 }
 
 /* -------------------------------------------------------------------------- */
 
-static int page_rules(int id)
+static int help_rules(int id)
 {
     const char *s0 = _(
-        "Move the mouse or joystick\n"
-        "or use keyboard arrows to\n"
-        "tilt the floor causing the\n"
-        "ball to roll.\n");
+        "Move the mouse or joystick\\"
+        "or use keyboard arrows to\\"
+        "tilt the floor causing the\\"
+        "ball to roll.\\");
     const char *s1 = _(
-        "Roll over coins to collect\n"
-        "them.  Collect coins to\n"
-        "unlock the goal and finish\n"
-        "the level.\n");
+        "Roll over coins to collect\\"
+        "them.  Collect coins to\\"
+        "unlock the goal and finish\\"
+        "the level.\\");
 
-    int w = video.device_w;
-    int h = video.device_h;
+    int w = config_get_d(CONFIG_WIDTH);
+    int h = config_get_d(CONFIG_HEIGHT);
 
     int jd, kd, ld;
 
@@ -145,14 +127,14 @@ static int page_rules(int id)
             if ((ld = gui_vstack(kd)))
             {
                 gui_space(ld);
-                gui_multi(ld, s0, GUI_SML, gui_wht, gui_wht);
+                gui_multi(ld, s0, GUI_SML, GUI_ALL, gui_wht, gui_wht);
                 gui_filler(ld);
             }
 
             if ((ld = gui_vstack(kd)))
             {
                 gui_space(ld);
-                gui_multi(ld, s1, GUI_SML, gui_wht, gui_wht);
+                gui_multi(ld, s1, GUI_SML, GUI_ALL, gui_wht, gui_wht);
                 gui_filler(ld);
             }
         }
@@ -161,20 +143,17 @@ static int page_rules(int id)
 
         if ((kd = gui_varray(jd)))
         {
-            const int ww = MIN(w, h) * 5 / 12;
-            const int hh = ww / 4 * 3;
-
             if ((ld = gui_vstack(kd)))
             {
                 gui_space(ld);
-                gui_image(ld, "gui/help1.jpg", ww, hh);
+                gui_image(ld, "gui/help1.jpg", 5 * w / 16, 5 * h / 16);
                 gui_filler(ld);
             }
 
             if ((ld = gui_vstack(kd)))
             {
                 gui_space(ld);
-                gui_image(ld, "gui/help2.jpg", ww, hh);
+                gui_image(ld, "gui/help2.jpg", 5 * w / 16, 5 * h / 16);
                 gui_filler(ld);
             }
         }
@@ -184,125 +163,115 @@ static int page_rules(int id)
     return id;
 }
 
-static int page_controls(int id)
+static int help_controls(int id)
 {
-    const char *s_rotate  = _("Left and right mouse buttons rotate the view\n"
-                              "Hold Shift for faster view rotation.");
-    const char *s_exit    = _("Exit / Pause");
-    const char *s_camera1 = _("Chase Camera");
-    const char *s_camera2 = _("Lazy Camera");
-    const char *s_camera3 = _("Manual Camera");
-    const char *s_restart = _("Restart Level");
-    const char *s_shot    = _("Screenshot");
+    const char *s4 = _("Left and right mouse buttons rotate the view.");
+    const char *s5 = _("Hold Shift for faster view rotation.");
+    const char *s6 = _("Pause / Release Pointer");
+    const char *s7 = _("Exit / Cancel Menu");
+    const char *s8 = _("Chase View");
+    const char *s9 = _("Lazy View");
+    const char *sA = _("Manual View");
+    const char *sC = _("Screenshot");
 
-    /*
-     * SDL_GetKeyName overwrites some of its results, that's why we
-     * don't cache the pointers anymore.
-     */
+    const char *k0 = pretty_keyname((SDLKey) config_get_d(CONFIG_KEY_PAUSE));
+    const char *k1 = pretty_keyname(SDLK_ESCAPE);
+    const char *k2 = pretty_keyname((SDLKey) config_get_d(CONFIG_KEY_CAMERA_1));
+    const char *k3 = pretty_keyname((SDLKey) config_get_d(CONFIG_KEY_CAMERA_2));
+    const char *k4 = pretty_keyname((SDLKey) config_get_d(CONFIG_KEY_CAMERA_3));
+    const char *k6 = pretty_keyname(SDLK_F10);
 
-    const SDL_Keycode k_exit = KEY_EXIT;
-    const SDL_Keycode k_cam1 = config_get_d(CONFIG_KEY_CAMERA_1);
-    const SDL_Keycode k_cam2 = config_get_d(CONFIG_KEY_CAMERA_2);
-    const SDL_Keycode k_cam3 = config_get_d(CONFIG_KEY_CAMERA_3);
-    const SDL_Keycode k_restart = config_get_d(CONFIG_KEY_RESTART);
-    const SDL_Keycode k_shot = KEY_SCREENSHOT;
-
-    int jd, kd;
-
-    gui_space(id);
-
-    if ((jd = gui_vstack(id)))
-    {
-        if ((kd = gui_harray(jd)))
-        {
-            gui_label(kd, s_exit,   GUI_SML, gui_wht, gui_wht);
-            gui_label(kd, SDL_GetKeyName(k_exit), GUI_SML, gui_yel, gui_yel);
-        }
-        if ((kd = gui_harray(jd)))
-        {
-            gui_label(kd, s_camera1, GUI_SML, gui_wht, gui_wht);
-            gui_label(kd, SDL_GetKeyName(k_cam1), GUI_SML, gui_yel, gui_yel);
-        }
-        if ((kd = gui_harray(jd)))
-        {
-            gui_label(kd, s_camera2, GUI_SML, gui_wht, gui_wht);
-            gui_label(kd, SDL_GetKeyName(k_cam2), GUI_SML, gui_yel, gui_yel);
-        }
-        if ((kd = gui_harray(jd)))
-        {
-            gui_label(kd, s_camera3, GUI_SML, gui_wht, gui_wht);
-            gui_label(kd, SDL_GetKeyName(k_cam3), GUI_SML, gui_yel, gui_yel);
-        }
-        if ((kd = gui_harray(jd)))
-        {
-            gui_label(kd, s_restart, GUI_SML, gui_wht, gui_wht);
-            gui_label(kd, SDL_GetKeyName(k_restart), GUI_SML, gui_yel, gui_yel);
-        }
-        if ((kd = gui_harray(jd)))
-        {
-            gui_label(kd, s_shot, GUI_SML, gui_wht, gui_wht);
-            gui_label(kd, SDL_GetKeyName(k_shot), GUI_SML, gui_yel, gui_yel);
-        }
-
-        gui_set_rect(jd, GUI_ALL);
-    }
-
-    gui_space(id);
-
-    gui_multi(id, s_rotate, GUI_SML, gui_wht, gui_wht);
-
-    return id;
-}
-
-static int page_modes(int id)
-{
     int jd;
 
     gui_space(id);
 
-    if ((jd = gui_vstack(id)))
+    if ((jd = gui_harray(id)))
     {
-        gui_label(jd, _("Normal Mode"), GUI_SML, 0, 0);
-        gui_multi(jd,
-                  _("Finish a level before the time runs out.\n"
-                    "You need to collect coins in order to open the goal."),
-                  GUI_SML, gui_wht, gui_wht);
-
-        gui_set_rect(jd, GUI_ALL);
+        gui_label(jd, s6, GUI_SML, GUI_NE, gui_wht, gui_wht);
+        gui_label(jd, k0, GUI_SML, GUI_NW, gui_yel, gui_yel);
+    }
+    if ((jd = gui_harray(id)))
+    {
+        gui_label(jd, s7, GUI_SML, 0,      gui_wht, gui_wht);
+        gui_label(jd, k1, GUI_SML, 0,      gui_yel, gui_yel);
+    }
+    if ((jd = gui_harray(id)))
+    {
+        gui_label(jd, s8, GUI_SML, 0,      gui_wht, gui_wht);
+        gui_label(jd, k2, GUI_SML, 0,      gui_yel, gui_yel);
+    }
+    if ((jd = gui_harray(id)))
+    {
+        gui_label(jd, s9, GUI_SML, 0,      gui_wht, gui_wht);
+        gui_label(jd, k3, GUI_SML, 0,      gui_yel, gui_yel);
+    }
+    if ((jd = gui_harray(id)))
+    {
+        gui_label(jd, sA, GUI_SML, 0,      gui_wht, gui_wht);
+        gui_label(jd, k4, GUI_SML, 0,      gui_yel, gui_yel);
+    }
+    if ((jd = gui_harray(id)))
+    {
+        gui_label(jd, sC, GUI_SML, GUI_SE, gui_wht, gui_wht);
+        gui_label(jd, k6, GUI_SML, GUI_SW, gui_yel, gui_yel);
     }
 
     gui_space(id);
 
-    if ((jd = gui_vstack(id)))
-    {
-        gui_label(jd, _("Challenge Mode"), GUI_SML, 0, 0);
-        gui_multi(jd,
-                  _("Start playing from the first level of the set.\n"
-                    "You start with only three balls, do not lose them.\n"
-                    "Earn an extra ball for each 100 coins collected."),
-                  GUI_SML, gui_wht, gui_wht);
-
-        gui_set_rect(jd, GUI_ALL);
-    }
+    gui_label(id, s4, GUI_SML, GUI_TOP, gui_wht, gui_wht);
+    gui_label(id, s5, GUI_SML, GUI_BOT, gui_wht, gui_wht);
 
     return id;
 }
 
-static int page_tricks(int id)
+static int help_modes(int id)
+{
+    int jd, kd;
+
+    gui_space(id);
+
+    if ((jd = gui_hstack(id)))
+    {
+        gui_filler(jd);
+
+        if ((kd = gui_vstack(jd)))
+        {
+            gui_label(kd, _("Normal Mode"), GUI_SML, GUI_TOP, 0, 0);
+            gui_multi(kd,
+                      _("Finish a level before the time runs out.\\"
+                        "You need to collect coins in order to open the goal."),
+                      GUI_SML, GUI_BOT, gui_wht, gui_wht);
+
+            gui_space(kd);
+
+            gui_label(kd, _("Challenge Mode"), GUI_SML, GUI_TOP, 0, 0);
+            gui_multi(kd,
+                      _("Start playing from the first level of the set.\\"
+                        "You start with only three balls, do not lose them.\\"
+                        "Earn an extra ball for each 100 coins collected."),
+                      GUI_SML, GUI_BOT, gui_wht, gui_wht);
+        }
+
+        gui_filler(jd);
+    }
+    return id;
+}
+
+static int help_techniques(int id)
 {
     const char *s0 = _(
-        "Corners can be used to jump.\n"
-        "Get rolling and take aim\n"
-        "at the angle. You may be able\n"
-        "to reach new places.\n");
+        "Corners can be used to jump.\\"
+        "Get rolling and take aim\\"
+        "at the angle. You may be able\\"
+        "to reach new places.\\");
     const char *s1 = _(
-        "Tilting in 2 directions increases\n"
-        "the slope. Use the manual camera\n"
-        "and turn the camera by 45\n"
-        "degrees for best results.\n");
+        "Tilting in 2 directions increases\\"
+        "the slope. Use the manual view\\"
+        "and turn the camera by 45\\"
+        "degrees for best results.\\");
 
-    int w = video.device_w;
-    int h = video.device_h;
+    int w = config_get_d(CONFIG_WIDTH);
+    int h = config_get_d(CONFIG_HEIGHT);
 
     int jd, kd, ld;
 
@@ -312,27 +281,24 @@ static int page_tricks(int id)
 
         if ((kd = gui_varray(jd)))
         {
-            const int ww = MIN(w, h) / 3;
-            const int hh = ww / 4 * 3;
-
             if ((ld = gui_vstack(kd)))
             {
                 gui_space(ld);
-                gui_image(ld, "gui/help3.jpg", ww, hh);
+                gui_image(ld, "gui/help3.jpg", w / 4, h / 4);
                 gui_state(ld, _("Watch demo"), GUI_SML, 0, 0);
                 gui_filler(ld);
 
-                gui_set_state(ld, HELP_DEMO, 0);
+                gui_active(ld, HELP_DEMO_1, 0);
             }
 
             if ((ld = gui_vstack(kd)))
             {
                 gui_space(ld);
-                gui_image(ld, "gui/help4.jpg", ww, hh);
+                gui_image(ld, "gui/help4.jpg", w / 4, h / 4);
                 gui_state(ld, _("Watch demo"), GUI_SML, 0, 0);
                 gui_filler(ld);
 
-                gui_set_state(ld, HELP_DEMO, 1);
+                gui_active(ld, HELP_DEMO_2, 0);
             }
         }
 
@@ -343,14 +309,14 @@ static int page_tricks(int id)
             if ((ld = gui_vstack(kd)))
             {
                 gui_space(ld);
-                gui_multi(ld, s0, GUI_SML, gui_wht, gui_wht);
+                gui_multi(ld, s0, GUI_SML, GUI_ALL, gui_wht, gui_wht);
                 gui_filler(ld);
             }
 
             if ((ld = gui_vstack(kd)))
             {
                 gui_space(ld);
-                gui_multi(ld, s1, GUI_SML, gui_wht, gui_wht);
+                gui_multi(ld, s1, GUI_SML, GUI_ALL, gui_wht, gui_wht);
                 gui_filler(ld);
             }
         }
@@ -362,7 +328,7 @@ static int page_tricks(int id)
 
 /* -------------------------------------------------------------------------- */
 
-static int help_gui(void)
+static int help_enter(void)
 {
     int id;
 
@@ -370,66 +336,51 @@ static int help_gui(void)
     {
         help_menu(id);
 
-        switch (page)
+        switch (tab)
         {
-        case PAGE_RULES:    page_rules(id);    break;
-        case PAGE_CONTROLS: page_controls(id); break;
-        case PAGE_MODES:    page_modes(id);    break;
-        case PAGE_TRICKS:   page_tricks(id);   break;
+        case HELP_RULE: help_rules(id);      break;
+        case HELP_CONT: help_controls(id);   break;
+        case HELP_MODE: help_modes(id);      break;
+        case HELP_TECH: help_techniques(id); break;
+
+        default:
+            break;
         }
 
         gui_layout(id, 0, +1);
     }
-
     return id;
-}
-
-static int help_enter(struct state *st, struct state *prev, int intent)
-{
-    return transition_slide(help_gui(), 1, intent);
-}
-
-static int help_keybd(int c, int d)
-{
-    if (d)
-    {
-        if (c == KEY_EXIT)
-            return help_action(GUI_BACK, 0);
-    }
-    return 1;
 }
 
 static int help_buttn(int b, int d)
 {
     if (d)
     {
-        int active = gui_active();
-
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
-            return help_action(gui_token(active), gui_value(active));
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return help_action(GUI_BACK, 0);
+            return help_action(gui_token(gui_click()));
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return help_action(HELP_BACK);
     }
     return 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
-static int help_demo_enter(struct state *st, struct state *prev, int intent)
+static int help_demo_enter(void)
 {
-    game_client_fly(0.0f);
+    game_set_fly(0.f, game_client_file());
+    game_client_step(NULL);
     return 0;
 }
 
-static int help_demo_leave(struct state *st, struct state *next, int id, int intent)
+static void help_demo_leave(int id)
 {
     demo_replay_stop(0);
-    return 0;
 }
 
 static void help_demo_paint(int id, float t)
 {
-    game_client_draw(0, t);
+    game_draw(0, t);
 }
 
 static void help_demo_timer(int id, float dt)
@@ -438,25 +389,13 @@ static void help_demo_timer(int id, float dt)
 
     if (!demo_replay_step(dt))
         goto_state(&st_help);
-
-    game_client_blend(demo_replay_blend());
-}
-
-static int help_demo_keybd(int c, int d)
-{
-    if (d)
-    {
-        if (c == KEY_EXIT)
-            return goto_state(&st_help);
-    }
-    return 1;
 }
 
 static int help_demo_buttn(int b, int d)
 {
     if (d)
     {
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
             return goto_state(&st_help);
     }
     return 1;
@@ -472,8 +411,9 @@ struct state st_help = {
     shared_stick,
     shared_angle,
     shared_click,
-    help_keybd,
-    help_buttn
+    NULL,
+    help_buttn,
+    1, 0
 };
 
 struct state st_help_demo = {
@@ -485,6 +425,7 @@ struct state st_help_demo = {
     NULL,
     NULL,
     NULL,
-    help_demo_keybd,
-    help_demo_buttn
+    NULL,
+    help_demo_buttn,
+    1, 0
 };

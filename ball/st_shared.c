@@ -14,7 +14,6 @@
  */
 
 #include "gui.h"
-#include "transition.h"
 #include "config.h"
 #include "audio.h"
 #include "state.h"
@@ -24,14 +23,14 @@
 
 #include "st_shared.h"
 
-int shared_leave(struct state *st, struct state *next, int id, int intent)
+void shared_leave(int id)
 {
-    return transition_slide(id, 0, intent);
+    gui_delete(id);
 }
 
 void shared_paint(int id, float t)
 {
-    game_client_draw(0, t);
+    game_draw(0, t);
     gui_paint(id);
 }
 
@@ -42,9 +41,11 @@ void shared_timer(int id, float dt)
 
 int shared_point_basic(int id, int x, int y)
 {
-    int jd;
+    /* Pulse, activate and return the active id (if changed) */
 
-    if ((jd = gui_point(id, x, y)))
+    int jd = gui_point(id, x, y);
+
+    if (jd)
         gui_pulse(jd, 1.2f);
 
     return jd;
@@ -55,41 +56,35 @@ void shared_point(int id, int x, int y, int dx, int dy)
     shared_point_basic(id, x, y);
 }
 
-int shared_stick_basic(int id, int a, float v, int bump)
+int shared_stick_basic(int id, int a, int v)
 {
-    int jd;
+    /* Pulse, activate and return the active id (if changed) */
 
-    if ((jd = gui_stick(id, a, v, bump)))
+    int jd = 0;
+
+    if      (config_tst_d(CONFIG_JOYSTICK_AXIS_X, a))
+        jd = gui_stick(id, v, 0);
+    else if (config_tst_d(CONFIG_JOYSTICK_AXIS_Y, a))
+        jd = gui_stick(id, 0, v);
+    if (jd)
         gui_pulse(jd, 1.2f);
 
     return jd;
 }
 
-void shared_stick(int id, int a, float v, int bump)
+void shared_stick(int id, int a, int v)
 {
-    shared_stick_basic(id, a, v, bump);
+    shared_stick_basic(id, a, v);
 }
 
-void shared_angle(int id, float x, float z)
+void shared_angle(int id, int x, int z)
 {
     game_set_ang(x, z);
 }
 
-int shared_click_basic(int b, int d)
-{
-    /* Activate on left click. */
-
-    if (b == SDL_BUTTON_LEFT && d)
-        return st_buttn(config_get_d(CONFIG_JOYSTICK_BUTTON_A), 1);
-    else
-        return 1;
-}
-
 int shared_click(int b, int d)
 {
-    /* Activate based on GUI state. */
-
-    if (gui_click(b, d))
+    if (b == SDL_BUTTON_LEFT && d == 1)
         return st_buttn(config_get_d(CONFIG_JOYSTICK_BUTTON_A), 1);
     else
         return 1;

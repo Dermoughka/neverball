@@ -1,9 +1,9 @@
 // entity 0
 {
 "classname" "worldspawn"
-"message" "Tilt the floor as little as possible.\Less tilt means lower speed.\Lower speed means better control.\Watch the clock and use the time wisely.\"
+"message" "Tilt the floor as little as possible.\Less tilt means lower speed.\Lower speed means better control.\Watch the clock and use the time wisely.\\Click to begin.\"
 "coin_hs" "50 40"
-"time_hs" "700 1500"
+"time_hs" "700 3000"
 "goal_hs" "2000 5250"
 "goal" "20"
 "time" "9000"
@@ -11,7 +11,7 @@
 "shot" "shot-easy/goslow.jpg"
 "grad" "back/ocean.png"
 "back" "map-back/ocean.sol"
-"version" "1.1"
+"version" "1"
 "author" "Robert Kooima"
 // brush 0
 {

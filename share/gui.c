@@ -15,7 +15,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <limits.h>
 
 #include "config.h"
 #include "video.h"
@@ -24,715 +23,356 @@
 #include "vec3.h"
 #include "gui.h"
 #include "common.h"
-#include "font.h"
-#include "theme.h"
-#include "log.h"
-#include "lang.h"
-#include "ease.h"
-#include "transition.h"
 
 #include "fs.h"
+#include "fs_rwops.h"
 
 /*---------------------------------------------------------------------------*/
 
-/* Very pure colors for the GUI. I was watching BANZAI when I designed this. */
+#define MAXWIDGET 256
 
-const GLubyte gui_wht[4] = { 0xFF, 0xFF, 0xFF, 0xFF };  /* White  */
-const GLubyte gui_yel[4] = { 0xFF, 0xFF, 0x00, 0xFF };  /* Yellow */
-const GLubyte gui_red[4] = { 0xFF, 0x00, 0x00, 0xFF };  /* Red    */
-const GLubyte gui_grn[4] = { 0x00, 0xFF, 0x00, 0xFF };  /* Green  */
-const GLubyte gui_blu[4] = { 0x00, 0x00, 0xFF, 0xFF };  /* Blue   */
-const GLubyte gui_blk[4] = { 0x00, 0x00, 0x00, 0xFF };  /* Black  */
-const GLubyte gui_gry[4] = { 0x55, 0x55, 0x55, 0xFF };  /* Gray   */
-const GLubyte gui_shd[4] = { 0x00, 0x00, 0x00, 0x80 };  /* Shadow */
-
-const GLubyte gui_wht2[4] = { 0xFF, 0xFF, 0xFF, 0x60 };  /* Transparent white */
-
-/*---------------------------------------------------------------------------*/
-
-#define WIDGET_MAX 256
+#define GUI_TYPE 0xFFFE
 
 #define GUI_FREE   0
-#define GUI_HARRAY 1
-#define GUI_VARRAY 2
-#define GUI_HSTACK 3
-#define GUI_VSTACK 4
-#define GUI_FILLER 5
-#define GUI_IMAGE  6
-#define GUI_LABEL  7
-#define GUI_COUNT  8
-#define GUI_CLOCK  9
-#define GUI_SPACE  10
-#define GUI_BUTTON 11
-#define GUI_ROOT   12
-
 #define GUI_STATE  1
-#define GUI_FILL   2
-#define GUI_HILITE 4
-#define GUI_RECT   8
-#define GUI_LAYOUT 16
-#define GUI_CLIP   32
-#define GUI_OFFSET 64
-
-#define GUI_LINES 8
-
-/*---------------------------------------------------------------------------*/
+#define GUI_HARRAY 2
+#define GUI_VARRAY 4
+#define GUI_HSTACK 6
+#define GUI_VSTACK 8
+#define GUI_FILLER 10
+#define GUI_IMAGE  12
+#define GUI_LABEL  14
+#define GUI_COUNT  16
+#define GUI_CLOCK  18
+#define GUI_SPACE  20
 
 struct widget
 {
     int     type;
-    int     flags;
     int     token;
     int     value;
-    int     font;
     int     size;
     int     rect;
-
-    char   *text;
-
-    int     init_value;
-    char   *init_text;
-
-    int     layout_xd;
-    int     layout_yd;
-
-    const GLubyte *color0;
-    const GLubyte *color1;
 
     int     x, y;
     int     w, h;
     int     car;
     int     cdr;
 
-    GLuint  image;
-    GLfloat scale;
+    GLuint  text_img;
+    GLuint  text_obj;
+    GLuint  rect_obj;
 
-    int     text_w;
-    int     text_h;
+    const GLfloat *color0;
+    const GLfloat *color1;
+
+    GLfloat  scale;
+
+    int text_obj_w;
+    int text_obj_h;
 
     enum trunc trunc;
-
-    float offset_init_x;
-    float offset_init_y;
-
-    float offset_x;
-    float offset_y;
-
-    int   slide_flags;
-    float slide_delay;
-    float slide_dur;
-    float slide_time;
-
-    unsigned int hidden:1;
 };
 
 /*---------------------------------------------------------------------------*/
 
-/* GUI widget state */
+const GLfloat gui_wht[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+const GLfloat gui_yel[4] = { 1.0f, 1.0f, 0.0f, 1.0f };
+const GLfloat gui_red[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+const GLfloat gui_grn[4] = { 0.0f, 1.0f, 0.0f, 1.0f };
+const GLfloat gui_blu[4] = { 0.0f, 0.0f, 1.0f, 1.0f };
+const GLfloat gui_blk[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+const GLfloat gui_gry[4] = { 0.3f, 0.3f, 0.3f, 1.0f };
 
-static struct widget widget[WIDGET_MAX];
+/*---------------------------------------------------------------------------*/
+
+static struct widget widget[MAXWIDGET];
 static int           active;
-static int           hovered;
-static int           clicked;
-static int           padding;
-static int           borders[4];
+static int           radius;
+static TTF_Font     *font[3] = { NULL, NULL, NULL };
 
-/* Digit widgets for the HUD. */
+static void      *fontdata;
+static int        fontdatalen;
+static SDL_RWops *fontrwops;
 
-static int digit_id[FONT_SIZE_MAX][11];
-
-/* Cursor image. */
-
-static int cursor_id = 0;
-static int cursor_st = 0;
-
-/* GUI theme. */
-
-static struct theme curr_theme;
+static GLuint digit_text[3][11];
+static GLuint digit_list[3][11];
+static int    digit_w[3][11];
+static int    digit_h[3][11];
 
 /*---------------------------------------------------------------------------*/
 
 static int gui_hot(int id)
 {
-    return (widget[id].flags & GUI_STATE) && !widget[id].hidden;
+    return (widget[id].type & GUI_STATE);
 }
 
 /*---------------------------------------------------------------------------*/
-
-/* Vertex buffer definitions for widget rendering. */
-
-/* Vertex count */
-
-#define RECT_VERT 16
-#define TEXT_VERT  8
-#define IMAGE_VERT 4
-
-#define WIDGET_VERT (RECT_VERT + MAX(TEXT_VERT, IMAGE_VERT))
-
-/* Element count */
-
-#define RECT_ELEM 28
-
-#define WIDGET_ELEM (RECT_ELEM)
-
-struct vert
-{
-    GLubyte c[4];
-    GLfloat u[2];
-    GLshort p[2];
-};
-
-static struct vert vert_buf[WIDGET_MAX * WIDGET_VERT];
-static GLuint      vert_vbo = 0;
-static GLuint      vert_ebo = 0;
-
-/*---------------------------------------------------------------------------*/
-
-static void set_vert(struct vert *v, int x, int y,
-                     GLfloat s, GLfloat t, const GLubyte *c)
-{
-    v->c[0] = c[0];
-    v->c[1] = c[1];
-    v->c[2] = c[2];
-    v->c[3] = c[3];
-    v->u[0] = s;
-    v->u[1] = t;
-    v->p[0] = x;
-    v->p[1] = y;
-}
-
-/*---------------------------------------------------------------------------*/
-
-static void draw_enable(GLboolean c, GLboolean u, GLboolean p)
-{
-    glBindBuffer_(GL_ARRAY_BUFFER,         vert_vbo);
-    glBindBuffer_(GL_ELEMENT_ARRAY_BUFFER, vert_ebo);
-
-    if (c)
-    {
-        glEnableClientState(GL_COLOR_ARRAY);
-        glColorPointer   (4, GL_UNSIGNED_BYTE, sizeof (struct vert),
-                                  (GLvoid *) offsetof (struct vert, c));
-    }
-    if (u)
-    {
-        glEnableClientState(GL_TEXTURE_COORD_ARRAY);
-        glTexCoordPointer(2, GL_FLOAT,         sizeof (struct vert),
-                                  (GLvoid *) offsetof (struct vert, u));
-    }
-    if (p)
-    {
-        glEnableClientState(GL_VERTEX_ARRAY);
-        glVertexPointer  (2, GL_SHORT,         sizeof (struct vert),
-                                  (GLvoid *) offsetof (struct vert, p));
-    }
-}
-
-static void draw_rect(int id)
-{
-    glDrawElements(GL_TRIANGLE_STRIP, RECT_ELEM, GL_UNSIGNED_SHORT,
-                   (const GLvoid *) (id * WIDGET_ELEM * sizeof (GLushort)));
-}
-
-static void draw_text(int id)
-{
-    glDrawArrays(GL_TRIANGLE_STRIP, id * WIDGET_VERT + RECT_VERT, TEXT_VERT);
-}
-
-static void draw_image(int id)
-{
-    glDrawArrays(GL_TRIANGLE_STRIP, id * WIDGET_VERT + RECT_VERT, IMAGE_VERT);
-}
-
-static void draw_disable(void)
-{
-    glBindBuffer_(GL_ARRAY_BUFFER,         0);
-    glBindBuffer_(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-    glDisableClientState(GL_VERTEX_ARRAY);
-    glDisableClientState(GL_TEXTURE_COORD_ARRAY);
-    glDisableClientState(GL_COLOR_ARRAY);
-}
-
-/*---------------------------------------------------------------------------*/
-
 /*
- * Generate vertices for a 3x3 rectangle. Vertices are arranged
- * top-to-bottom and left-to-right, triangle strips are arranged
- * left-to-right and top-to-bottom (one strip per row). Degenerate
- * triangles (two extra indices per stitch) are inserted for a
- * continous strip.
+ * Initialize a  display list  containing a  rectangle (x, y, w, h) to
+ * which a  rendered-font texture  may be applied.   Colors  c0 and c1
+ * determine the top-to-bottom color gradient of the text.
  */
 
-static const GLushort rect_elem_base[RECT_ELEM] = {
-    0, 1, 4, 5, 8, 9, 12, 13, 13, 1,    /* Top    */
-    1, 2, 5, 6, 9, 10, 13, 14, 14, 2,   /* Middle */
-    2, 3, 6, 7, 10, 11, 14, 15          /* Bottom */
-};
-
-static void gui_geom_rect(int id, int x, int y, int w, int h, int f)
+static GLuint gui_list(int x, int y,
+                       int w, int h, const float *c0, const float *c1)
 {
-    GLushort rect_elem[RECT_ELEM];
+    GLuint list = glGenLists(1);
 
-    struct vert *v = vert_buf + id * WIDGET_VERT;
-    struct vert *p = v;
+    GLfloat s0, t0;
+    GLfloat s1, t1;
 
-    int X[4];
-    int Y[4];
-
-    int i, j;
-
-    /* Generate vertex and element data for the widget's rectangle. */
-
-    X[0] = x;
-    X[1] = x +     ((f & GUI_W) ? borders[0] : 0);
-    X[2] = x + w - ((f & GUI_E) ? borders[1] : 0);
-    X[3] = x + w;
-
-    Y[0] = y + h;
-    Y[1] = y + h - ((f & GUI_N) ? borders[2] : 0);
-    Y[2] = y +     ((f & GUI_S) ? borders[3] : 0);
-    Y[3] = y;
-
-    for (i = 0; i < 4; i++)
-        for (j = 0; j < 4; j++)
-            set_vert(p++, X[i], Y[j], curr_theme.s[i], curr_theme.t[j], gui_wht);
-
-    for (i = 0; i < RECT_ELEM; i++)
-        rect_elem[i] = id * WIDGET_VERT + rect_elem_base[i];
-
-    /* Copy this off to the VBOs. */
-
-    glBindBuffer_   (GL_ARRAY_BUFFER, vert_vbo);
-    glBufferSubData_(GL_ARRAY_BUFFER,
-                     id * WIDGET_VERT * sizeof (struct vert),
-                            RECT_VERT * sizeof (struct vert), v);
-    glBindBuffer_   (GL_ARRAY_BUFFER, 0);
-
-    glBindBuffer_   (GL_ELEMENT_ARRAY_BUFFER, vert_ebo);
-    glBufferSubData_(GL_ELEMENT_ARRAY_BUFFER,
-                     id * WIDGET_ELEM * sizeof (GLushort),
-                            RECT_ELEM * sizeof (GLushort), rect_elem);
-    glBindBuffer_   (GL_ELEMENT_ARRAY_BUFFER, 0);
-}
-
-static void gui_geom_text(int id, int x, int y, int w, int h,
-                          const GLubyte *c0, const GLubyte *c1)
-{
-    struct vert *v = vert_buf + id * WIDGET_VERT + RECT_VERT;
+    int W, H, ww, hh, d = h / 16;
 
     /* Assume the applied texture size is rect size rounded to power-of-two. */
 
-    int W;
-    int H;
-
     image_size(&W, &H, w, h);
 
-    if (w > 0 && h > 0 && W > 0 && H > 0)
+    ww = ((W - w) % 2) ? w + 1 : w;
+    hh = ((H - h) % 2) ? h + 1 : h;
+
+    s0 = 0.5f * (W - ww) / W;
+    t0 = 0.5f * (H - hh) / H;
+    s1 = 1.0f - s0;
+    t1 = 1.0f - t0;
+
+    glNewList(list, GL_COMPILE);
     {
-        const int d = h / 16;  /* Shadow offset */
-
-        const int ww = ((W - w) % 2) ? w + 1 : w;
-        const int hh = ((H - h) % 2) ? h + 1 : h;
-
-        const GLfloat s0 = 0.5f * (W - ww) / W;
-        const GLfloat t0 = 0.5f * (H - hh) / H;
-        const GLfloat s1 = 1.0f - s0;
-        const GLfloat t1 = 1.0f - t0;
-
-        GLubyte color[4];
-
-        color[0] = gui_shd[0];
-        color[1] = gui_shd[1];
-        color[2] = gui_shd[2];
-        color[3] = c0[3] < 0xFF ? (GLubyte) (c0[3] * 0.5f) : gui_shd[3];
-
-        /* Generate vertex data for the colored text and its shadow. */
-
-        set_vert(v + 0, x      + d, y + hh - d, s0, t0, color);
-        set_vert(v + 1, x      + d, y      - d, s0, t1, color);
-        set_vert(v + 2, x + ww + d, y + hh - d, s1, t0, color);
-        set_vert(v + 3, x + ww + d, y      - d, s1, t1, color);
-
-        set_vert(v + 4, x,          y + hh,     s0, t0, c1);
-        set_vert(v + 5, x,          y,          s0, t1, c0);
-        set_vert(v + 6, x + ww,     y + hh,     s1, t0, c1);
-        set_vert(v + 7, x + ww,     y,          s1, t1, c0);
-
-    }
-    else memset(v, 0, TEXT_VERT * sizeof (struct vert));
-
-    /* Copy this off to the VBO. */
-
-    glBindBuffer_   (GL_ARRAY_BUFFER, vert_vbo);
-    glBufferSubData_(GL_ARRAY_BUFFER,
-                     (id * WIDGET_VERT + RECT_VERT) * sizeof (struct vert),
-                                         TEXT_VERT  * sizeof (struct vert), v);
-    glBindBuffer_   (GL_ARRAY_BUFFER, 0);
-}
-
-static void gui_geom_image(int id, int x, int y, int w, int h, int f)
-{
-    struct vert *v = vert_buf + id * WIDGET_VERT + RECT_VERT;
-
-    int X[2];
-    int Y[2];
-
-    /* Trace inner vertices of the background rectangle. */
-
-    X[0] = x +     ((f & GUI_W) ? borders[0] : 0);
-    X[1] = x + w - ((f & GUI_E) ? borders[1] : 0);
-
-    Y[0] = y + h - ((f & GUI_N) ? borders[2] : 0);
-    Y[1] = y +     ((f & GUI_S) ? borders[3] : 0);
-
-    set_vert(v + 0, X[0], Y[0], 0.0f, 1.0f, gui_wht);
-    set_vert(v + 1, X[0], Y[1], 0.0f, 0.0f, gui_wht);
-    set_vert(v + 2, X[1], Y[0], 1.0f, 1.0f, gui_wht);
-    set_vert(v + 3, X[1], Y[1], 1.0f, 0.0f, gui_wht);
-
-    /* Copy this off to the VBO. */
-
-    glBindBuffer_   (GL_ARRAY_BUFFER, vert_vbo);
-    glBufferSubData_(GL_ARRAY_BUFFER,
-                     (id * WIDGET_VERT + RECT_VERT) * sizeof (struct vert),
-                     IMAGE_VERT * sizeof (struct vert), v);
-    glBindBuffer_   (GL_ARRAY_BUFFER, 0);
-}
-
-static void gui_geom_widget(int id, int flags)
-{
-    int jd;
-
-    int w = widget[id].w;
-    int h = widget[id].h;
-
-    int W = widget[id].text_w;
-    int H = widget[id].text_h;
-    int R = widget[id].rect;
-
-    const GLubyte *c0 = widget[id].color0;
-    const GLubyte *c1 = widget[id].color1;
-
-    if ((widget[id].flags & GUI_RECT) && !(flags & GUI_RECT))
-    {
-        gui_geom_rect(id, -w / 2, -h / 2, w, h, R);
-        flags |= GUI_RECT;
-    }
-
-    switch (widget[id].type)
-    {
-    case GUI_FILLER:
-    case GUI_SPACE:
-        break;
-
-    case GUI_HARRAY:
-    case GUI_VARRAY:
-    case GUI_HSTACK:
-    case GUI_VSTACK:
-
-        for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-            gui_geom_widget(jd, flags);
-
-        break;
-
-    case GUI_IMAGE:
-        gui_geom_image(id, -w / 2, -h / 2, w, h, R);
-        break;
-
-    case GUI_BUTTON:
-    case GUI_LABEL:
-        // Handled by gui_render_text().
-        break;
-
-    default:
-        gui_geom_text(id, -W / 2, -H / 2, W, H, c0, c1);
-        break;
-    }
-}
-
-/*---------------------------------------------------------------------------*/
-
-#define FONT_MAX 4
-
-static struct font fonts[FONT_MAX];
-static int         fontc;
-
-static const int font_sizes_scale[FONT_SIZE_MAX] = {
-    52, // GUI_TNY
-    26, // GUI_SML
-    20, // GUI_TCH
-    13, // GUI_MED
-    7,  // GUI_LRG
-};
-
-static int font_sizes[FONT_SIZE_MAX];
-
-static int gui_font_load(const char *path)
-{
-    int i;
-
-    /* Find a previously loaded font. */
-
-    for (i = 0; i < fontc; i++)
-        if (strcmp(fonts[i].path, path) == 0)
-            return i;
-
-    /* Load a new font. */
-
-    if (fontc < FONT_MAX)
-    {
-        if (font_load(&fonts[fontc], path, font_sizes))
+        glBegin(GL_QUADS);
         {
-            fontc++;
-            return fontc - 1;
+            glColor4f(0.0f, 0.0f, 0.0f, 0.5f);
+            glTexCoord2f(s0, t1); glVertex2i(x      + d, y      - d);
+            glTexCoord2f(s1, t1); glVertex2i(x + ww + d, y      - d);
+            glTexCoord2f(s1, t0); glVertex2i(x + ww + d, y + hh - d);
+            glTexCoord2f(s0, t0); glVertex2i(x      + d, y + hh - d);
+
+            glColor4fv(c0);
+            glTexCoord2f(s0, t1); glVertex2i(x,      y);
+            glTexCoord2f(s1, t1); glVertex2i(x + ww, y);
+
+            glColor4fv(c1);
+            glTexCoord2f(s1, t0); glVertex2i(x + ww, y + hh);
+            glTexCoord2f(s0, t0); glVertex2i(x,      y + hh);
         }
+        glEnd();
     }
+    glEndList();
 
-    /* Return index of default font. */
-
-    return 0;
+    return list;
 }
-
-static void gui_font_quit(void);
-
-static void gui_font_init(int s)
-{
-    gui_font_quit();
-
-    if (font_init())
-    {
-        int i;
-
-        /* Calculate font sizes. */
-
-        for (i = 0; i < FONT_SIZE_MAX; ++i)
-            font_sizes[i] = s / font_sizes_scale[i];
-
-        /* Load the default font at index 0. */
-
-        gui_font_load(*curr_lang.font ? curr_lang.font : GUI_FACE);
-    }
-}
-
-static void gui_font_quit(void)
-{
-    int i;
-
-    for (i = 0; i < fontc; i++)
-        font_free(&fonts[i]);
-
-    fontc = 0;
-
-    font_quit();
-}
-
-/*---------------------------------------------------------------------------*/
-
-static void gui_theme_quit(void)
-{
-    theme_free(&curr_theme);
-}
-
-static void gui_theme_init(void)
-{
-    gui_theme_quit();
-
-    theme_load(&curr_theme, config_get_s(CONFIG_THEME));
-}
-
-/*---------------------------------------------------------------------------*/
-
-static void gui_glyphs_free(void);
-
-static void gui_glyphs_init(void)
-{
-    int i, j;
-
-    gui_glyphs_free();
-
-    /* Cache digit glyphs for HUD rendering. */
-
-    for (i = 0; i < FONT_SIZE_MAX; i++)
-    {
-        digit_id[i][ 0] = gui_label(0, "0", i, 0, 0);
-        digit_id[i][ 1] = gui_label(0, "1", i, 0, 0);
-        digit_id[i][ 2] = gui_label(0, "2", i, 0, 0);
-        digit_id[i][ 3] = gui_label(0, "3", i, 0, 0);
-        digit_id[i][ 4] = gui_label(0, "4", i, 0, 0);
-        digit_id[i][ 5] = gui_label(0, "5", i, 0, 0);
-        digit_id[i][ 6] = gui_label(0, "6", i, 0, 0);
-        digit_id[i][ 7] = gui_label(0, "7", i, 0, 0);
-        digit_id[i][ 8] = gui_label(0, "8", i, 0, 0);
-        digit_id[i][ 9] = gui_label(0, "9", i, 0, 0);
-        digit_id[i][10] = gui_label(0, ":", i, 0, 0);
-    }
-
-    for (i = 0; i < FONT_SIZE_MAX; i++)
-        for (j = 0; j < 11; ++j)
-            gui_layout(digit_id[i][j], 0, 0);
-
-    /* Cache an image for the cursor. Scale it to the same size as a digit. */
-
-    if ((cursor_id = gui_image(0, "gui/cursor.png", widget[digit_id[1][0]].w,
-                                                    widget[digit_id[1][0]].h)))
-        gui_layout(cursor_id, 0, 0);
-}
-
-static void gui_glyphs_free(void)
-{
-    int i, j;
-
-    for (i = 0; i < FONT_SIZE_MAX; ++i)
-        for (j = 0; j < 11; ++j)
-        {
-            gui_delete(digit_id[i][j]);
-            digit_id[i][j] = 0;
-        }
-
-    gui_delete(cursor_id);
-    cursor_id = 0;
-}
-
-/*---------------------------------------------------------------------------*/
-
-static void gui_widget_size(int);
 
 /*
- * Load or reload everything that depends on window/drawable size.
+ * Initialize a display list containing a rounded-corner rectangle (x,
+ * y, w, h).  Generate texture coordinates to properly apply a texture
+ * map to the rectangle as though the corners were not rounded.
  */
-void gui_resize(void)
-{
-    const int s = MIN(video.device_w, video.device_h);
 
+static GLuint gui_rect(int x, int y, int w, int h, int f, int r)
+{
+    GLuint list = glGenLists(1);
+
+    int n = 8;
     int i;
 
-    /* Compute default widget/text padding. */
-
-    padding = s / 60;
-
-    for (i = 0; i < 4; i++)
-        borders[i] = padding;
-
-    /* Load font sizes. */
-
-    gui_font_init(s);
-
-    /* Load theme textures. */
-
-    gui_theme_init();
-
-    /* Cache digit glyphs now because some widgets base their size on these. */
-
-    gui_glyphs_init();
-
-    /* Recompute widget space requirements with the new font sizes. */
-
-    for (i = 1; i < WIDGET_MAX; ++i)
-        if (widget[i].type != GUI_FREE)
+    glNewList(list, GL_COMPILE);
+    {
+        glBegin(GL_QUAD_STRIP);
         {
-            /*
-            * Text widgets get their size from the first rendered string. To that end,
-            * we keep that initial string around and use it here to obtain the new text
-            * size with the new font size.
-            */
+            /* Left side... */
 
-            if (widget[i].init_text)
+            for (i = 0; i <= n; i++)
             {
-                TTF_Font *ttf = fonts[widget[i].font].ttf[widget[i].size];
+                float a = 0.5f * V_PI * (float) i / (float) n;
+                float s = r * fsinf(a);
+                float c = r * fcosf(a);
 
-                if (ttf)
-                {
-                    size_image_from_font(NULL, NULL,
-                                        &widget[i].text_w,
-                                        &widget[i].text_h,
-                                        widget[i].init_text, ttf);
-                }
+                float X  = x     + r - c;
+                float Ya = y + h + ((f & GUI_NW) ? (s - r) : 0);
+                float Yb = y     + ((f & GUI_SW) ? (r - s) : 0);
+
+                glTexCoord2f((X - x) / w, (Ya - y) / h);
+                glVertex2f(X, Ya);
+
+                glTexCoord2f((X - x) / w, (Yb - y) / h);
+                glVertex2f(X, Yb);
             }
 
-            /* Actually compute the stuff. */
+            /* ... Right side. */
 
-            gui_widget_size(i);
+            for (i = 0; i <= n; i++)
+            {
+                float a = 0.5f * V_PI * (float) i / (float) n;
+                float s = r * fsinf(a);
+                float c = r * fcosf(a);
+
+                float X  = x + w - r + s;
+                float Ya = y + h + ((f & GUI_NE) ? (c - r) : 0);
+                float Yb = y     + ((f & GUI_SE) ? (r - c) : 0);
+
+                glTexCoord2f((X - x) / w, (Ya - y) / h);
+                glVertex2f(X, Ya);
+
+                glTexCoord2f((X - x) / w, (Yb - y) / h);
+                glVertex2f(X, Yb);
+            }
         }
+        glEnd();
+    }
+    glEndList();
 
-    /* Re-do any saved layouts. Separate from above due to many inter-dependencies. */
+    return list;
+}
 
-    for (i = 1; i < WIDGET_MAX; ++i)
-        if (widget[i].type != GUI_FREE && (widget[i].flags & GUI_LAYOUT))
-            gui_layout(i, widget[i].layout_xd, widget[i].layout_yd);
+/*---------------------------------------------------------------------------*/
 
-    /* Whew. */
+static const char *pick_font_path(void)
+{
+    const char *path;
+
+    path = _(GUI_FACE);
+
+    if (!fs_exists(path))
+    {
+        fprintf(stderr, _("Font '%s' doesn't exist, trying default font.\n"),
+                path);
+
+        path = GUI_FACE;
+    }
+
+    return path;
 }
 
 void gui_init(void)
 {
-    memset(widget, 0, sizeof (struct widget) * WIDGET_MAX);
+    const float *c0 = gui_yel;
+    const float *c1 = gui_red;
 
-    /* Initialize the VBOs. */
+    int w = config_get_d(CONFIG_WIDTH);
+    int h = config_get_d(CONFIG_HEIGHT);
+    int i, j, s = (h < w) ? h : w;
 
-    memset(vert_buf, 0, sizeof (vert_buf));
+    /* Initialize font rendering. */
 
-    glGenBuffers_(1,              &vert_vbo);
-    glBindBuffer_(GL_ARRAY_BUFFER, vert_vbo);
-    glBufferData_(GL_ARRAY_BUFFER, sizeof (vert_buf), vert_buf, GL_STATIC_DRAW);
-    glBindBuffer_(GL_ARRAY_BUFFER, 0);
+    if (TTF_Init() == 0)
+    {
+        const char *fontpath = pick_font_path();
 
-    glGenBuffers_(1,                      &vert_ebo);
-    glBindBuffer_(GL_ELEMENT_ARRAY_BUFFER, vert_ebo);
-    glBufferData_(GL_ELEMENT_ARRAY_BUFFER,
-                  WIDGET_MAX * WIDGET_ELEM * sizeof (GLushort),
-                  NULL, GL_STATIC_DRAW);
-    glBindBuffer_(GL_ELEMENT_ARRAY_BUFFER, 0);
+        int s0 = s / 26;
+        int s1 = s / 13;
+        int s2 = s /  7;
 
-    /* Initialize window size-dependent resources. */
+        memset(widget, 0, sizeof (struct widget) * MAXWIDGET);
 
-    gui_resize();
+        /* Load the font. */
+
+        if (!(fontdata = fs_load(fontpath, &fontdatalen)))
+        {
+            fprintf(stderr, _("Could not load font '%s'.\n"), fontpath);
+            /* Return or no return, we'll probably crash now. */
+            return;
+        }
+
+        fontrwops = SDL_RWFromConstMem(fontdata, fontdatalen);
+
+        /* Load small, medium, and large typefaces. */
+
+        font[GUI_SML] = TTF_OpenFontRW(fontrwops, 0, s0);
+
+        SDL_RWseek(fontrwops, 0, SEEK_SET);
+        font[GUI_MED] = TTF_OpenFontRW(fontrwops, 0, s1);
+
+        SDL_RWseek(fontrwops, 0, SEEK_SET);
+        font[GUI_LRG] = TTF_OpenFontRW(fontrwops, 0, s2);
+
+        /* fontrwops remains open. */
+
+        radius = s / 60;
+
+        /* Initialize digit glyphs and lists for counters and clocks. */
+
+        for (i = 0; i < 3; i++)
+        {
+            char text[2];
+
+            /* Draw digits 0 through 9. */
+
+            for (j = 0; j < 10; j++)
+            {
+                text[0] = '0' + (char) j;
+                text[1] =  0;
+
+                digit_text[i][j] = make_image_from_font(NULL, NULL,
+                                                        &digit_w[i][j],
+                                                        &digit_h[i][j],
+                                                        text, font[i]);
+                digit_list[i][j] = gui_list(-digit_w[i][j] / 2,
+                                            -digit_h[i][j] / 2,
+                                            +digit_w[i][j],
+                                            +digit_h[i][j], c0, c1);
+            }
+
+            /* Draw the colon for the clock. */
+
+            digit_text[i][j] = make_image_from_font(NULL, NULL,
+                                                    &digit_w[i][10],
+                                                    &digit_h[i][10],
+                                                    ":", font[i]);
+            digit_list[i][j] = gui_list(-digit_w[i][10] / 2,
+                                        -digit_h[i][10] / 2,
+                                        +digit_w[i][10],
+                                        +digit_h[i][10], c0, c1);
+        }
+    }
 
     active = 0;
 }
 
 void gui_free(void)
 {
-    int id;
-
-    /* Release the VBOs. */
-
-    glDeleteBuffers_(1, &vert_vbo);
-    glDeleteBuffers_(1, &vert_ebo);
+    int i, j, id;
 
     /* Release any remaining widget texture and display list indices. */
 
-    for (id = 1; id < WIDGET_MAX; id++)
+    for (id = 1; id < MAXWIDGET; id++)
     {
-        if (widget[id].image)
-            glDeleteTextures(1, &widget[id].image);
+        if (glIsTexture(widget[id].text_img))
+            glDeleteTextures(1, &widget[id].text_img);
 
-        if (widget[id].init_text)
-        {
-            free(widget[id].init_text);
-            widget[id].init_text = NULL;
-        }
+        if (glIsList(widget[id].text_obj))
+            glDeleteLists(widget[id].text_obj, 1);
+        if (glIsList(widget[id].rect_obj))
+            glDeleteLists(widget[id].rect_obj, 1);
 
-        if (widget[id].text)
-        {
-            free(widget[id].text);
-            widget[id].text = NULL;
-        }
-
-        widget[id].type  = GUI_FREE;
-        widget[id].flags = 0;
-        widget[id].image = 0;
-        widget[id].cdr   = 0;
-        widget[id].car   = 0;
+        widget[id].type     = GUI_FREE;
+        widget[id].text_img = 0;
+        widget[id].text_obj = 0;
+        widget[id].rect_obj = 0;
+        widget[id].cdr      = 0;
+        widget[id].car      = 0;
     }
+
+    /* Release all digit textures and display lists. */
+
+    for (i = 0; i < 3; i++)
+        for (j = 0; j < 11; j++)
+        {
+            if (glIsTexture(digit_text[i][j]))
+                glDeleteTextures(1, &digit_text[i][j]);
+
+            if (glIsList(digit_list[i][j]))
+                glDeleteLists(digit_list[i][j], 1);
+        }
 
     /* Release all loaded fonts and finalize font rendering. */
 
-    gui_font_quit();
+    if (font[GUI_LRG]) TTF_CloseFont(font[GUI_LRG]);
+    if (font[GUI_MED]) TTF_CloseFont(font[GUI_MED]);
+    if (font[GUI_SML]) TTF_CloseFont(font[GUI_SML]);
 
-    /* Release theme resources. */
+    if (fontrwops) SDL_RWclose(fontrwops);
+    if (fontdata)  free(fontdata);
 
-    gui_theme_quit();
+    TTF_Quit();
 }
 
 /*---------------------------------------------------------------------------*/
@@ -743,48 +383,28 @@ static int gui_widget(int pd, int type)
 
     /* Find an unused entry in the widget table. */
 
-    for (id = 1; id < WIDGET_MAX; id++)
+    for (id = 1; id < MAXWIDGET; id++)
         if (widget[id].type == GUI_FREE)
         {
             /* Set the type and default properties. */
 
-            widget[id].type   = type;
-            widget[id].flags  = 0;
-            widget[id].hidden = 0;
-            widget[id].token  = 0;
-            widget[id].value  = 0;
-            widget[id].text   = NULL;
-            widget[id].font   = 0;
-            widget[id].size   = 0;
-            widget[id].rect   = GUI_ALL;
-            widget[id].x      = 0;
-            widget[id].y      = 0;
-            widget[id].w      = 0;
-            widget[id].h      = 0;
-            widget[id].image  = 0;
-            widget[id].color0 = gui_wht;
-            widget[id].color1 = gui_wht;
-            widget[id].scale  = 1.0f;
-            widget[id].trunc  = TRUNC_NONE;
-            widget[id].text_w = 0;
-            widget[id].text_h = 0;
+            widget[id].type     = type;
+            widget[id].token    = 0;
+            widget[id].value    = 0;
+            widget[id].size     = 0;
+            widget[id].rect     = GUI_NW | GUI_SW | GUI_NE | GUI_SE;
+            widget[id].w        = 0;
+            widget[id].h        = 0;
+            widget[id].text_img = 0;
+            widget[id].text_obj = 0;
+            widget[id].rect_obj = 0;
+            widget[id].color0   = gui_wht;
+            widget[id].color1   = gui_wht;
+            widget[id].scale    = 1.0f;
+            widget[id].trunc    = TRUNC_NONE;
 
-            widget[id].init_text = NULL;
-            widget[id].init_value = 0;
-
-            widget[id].layout_xd = 0;
-            widget[id].layout_yd = 0;
-
-
-            widget[id].offset_init_x = 0.0f;
-            widget[id].offset_init_y = 0.0f;
-            widget[id].offset_x = 0.0f;
-            widget[id].offset_y = 0.0f;
-
-            widget[id].slide_flags = 0;
-            widget[id].slide_delay = 0.0f;
-            widget[id].slide_dur = 0.0f;
-            widget[id].slide_time = 0.0f;
+            widget[id].text_obj_w = 0;
+            widget[id].text_obj_h = 0;
 
             /* Insert the new widget into the parent's widget list. */
 
@@ -803,7 +423,7 @@ static int gui_widget(int pd, int type)
             return id;
         }
 
-    log_printf("Out of widget IDs\n");
+    fprintf(stderr, "Out of widget IDs\n");
 
     return 0;
 }
@@ -814,40 +434,20 @@ int gui_hstack(int pd) { return gui_widget(pd, GUI_HSTACK); }
 int gui_vstack(int pd) { return gui_widget(pd, GUI_VSTACK); }
 int gui_filler(int pd) { return gui_widget(pd, GUI_FILLER); }
 
-/*
- * For when you really want to use gui_layout on multiple widgets.
- */
-int gui_root(void)
-{
-    int id;
-
-    if ((id = gui_widget(0, GUI_ROOT)))
-    {
-        // Get gui_stick() working.
-        widget[id].w = INT_MAX;
-        widget[id].h = INT_MAX;
-    }
-    return id;
-}
-
 /*---------------------------------------------------------------------------*/
 
-static struct size gui_measure_ttf(const char *text, TTF_Font *font)
+struct size
+{
+    int w, h;
+};
+
+
+static struct size gui_measure(const char *text, TTF_Font *font)
 {
     struct size size = { 0, 0 };
-
-    if (text && font)
-        TTF_SizeUTF8(font, text, &size.w, &size.h);
-
+    TTF_SizeUTF8(font, text, &size.w, &size.h);
     return size;
 }
-
-struct size gui_measure(const char *text, int size)
-{
-    return gui_measure_ttf(text, fonts[0].ttf[size]);
-}
-
-/*---------------------------------------------------------------------------*/
 
 static char *gui_trunc_head(const char *text,
                             const int maxwidth,
@@ -863,9 +463,9 @@ static char *gui_trunc_head(const char *text,
     {
         mid = (left + right) / 2;
 
-        str = concat_string(GUI_ELLIPSIS, text + mid, NULL);
+        str = concat_string("...", text + mid, NULL);
 
-        if (gui_measure_ttf(str, font).w <= maxwidth)
+        if (gui_measure(str, font).w <= maxwidth)
             right = mid;
         else
             left = mid;
@@ -873,7 +473,7 @@ static char *gui_trunc_head(const char *text,
         free(str);
     }
 
-    return concat_string(GUI_ELLIPSIS, text + right, NULL);
+    return concat_string("...", text + right, NULL);
 }
 
 static char *gui_trunc_tail(const char *text,
@@ -890,12 +490,12 @@ static char *gui_trunc_tail(const char *text,
     {
         mid = (left + right) / 2;
 
-        str = malloc(mid + sizeof (GUI_ELLIPSIS));
+        str = malloc(mid + sizeof ("..."));
 
         memcpy(str,       text,  mid);
-        memcpy(str + mid, GUI_ELLIPSIS, sizeof (GUI_ELLIPSIS));
+        memcpy(str + mid, "...", sizeof ("..."));
 
-        if (gui_measure_ttf(str, font).w <= maxwidth)
+        if (gui_measure(str, font).w <= maxwidth)
             left = mid;
         else
             right = mid;
@@ -903,10 +503,10 @@ static char *gui_trunc_tail(const char *text,
         free(str);
     }
 
-    str = malloc(left + sizeof (GUI_ELLIPSIS));
+    str = malloc(left + sizeof ("..."));
 
     memcpy(str,        text,  left);
-    memcpy(str + left, GUI_ELLIPSIS, sizeof (GUI_ELLIPSIS));
+    memcpy(str + left, "...", sizeof ("..."));
 
     return str;
 }
@@ -916,7 +516,7 @@ static char *gui_truncate(const char *text,
                           TTF_Font *font,
                           enum trunc trunc)
 {
-    if (gui_measure_ttf(text, font).w <= maxwidth)
+    if (gui_measure(text, font).w <= maxwidth)
         return strdup(text);
 
     switch (trunc)
@@ -933,61 +533,34 @@ static char *gui_truncate(const char *text,
 
 void gui_set_image(int id, const char *file)
 {
-    glDeleteTextures(1, &widget[id].image);
+    if (glIsTexture(widget[id].text_img))
+        glDeleteTextures(1, &widget[id].text_img);
 
-    widget[id].image = make_image_from_file(file, IF_MIPMAP);
+    widget[id].text_img = make_image_from_file(file);
 }
 
 void gui_set_label(int id, const char *text)
 {
-    TTF_Font *ttf = fonts[widget[id].font].ttf[widget[id].size];
+    int w, h;
 
-    int w = 0;
-    int h = 0;
+    if (glIsTexture(widget[id].text_img))
+        glDeleteTextures(1, &widget[id].text_img);
+    if (glIsList(widget[id].text_obj))
+        glDeleteLists(widget[id].text_obj, 1);
 
-    char *trunc_str, *full_str;
+    text = gui_truncate(text, widget[id].w - radius,
+                        font[widget[id].size],
+                        widget[id].trunc);
 
-    glDeleteTextures(1, &widget[id].image);
+    widget[id].text_img = make_image_from_font(NULL, NULL, &w, &h,
+                                               text, font[widget[id].size]);
+    widget[id].text_obj = gui_list(-w / 2, -h / 2, w, h,
+                                   widget[id].color0, widget[id].color1);
 
-    /* Create a truncated version. */
+    widget[id].text_obj_w = w;
+    widget[id].text_obj_h = h;
 
-    trunc_str = gui_truncate(text, widget[id].w, ttf, widget[id].trunc);
-
-    /*
-     * Save a copy of the full string in case we need to re-render.
-     * The new string COULD BE the exact same old string, so order of
-     * operation is important here: copy, free, assign.
-     */
-
-    full_str = strdup(text);
-
-    if (widget[id].text)
-    {
-        free(widget[id].text);
-        widget[id].text = NULL;
-    }
-
-    widget[id].text = full_str;
-    widget[id].text_w = 0;
-    widget[id].text_h = 0;
-
-    widget[id].image = make_image_from_font(NULL, NULL,
-                                            &widget[id].text_w,
-                                            &widget[id].text_h,
-                                            trunc_str, ttf, 0);
-
-    /* Rebuild text rectangle. */
-
-    w = widget[id].text_w;
-    h = widget[id].text_h;
-
-    gui_geom_text(id, -w / 2, -h / 2, w, h,
-                  widget[id].color0,
-                  widget[id].color1);
-
-    /* Last but not least. */
-
-    free(trunc_str);
+    free((void *) text);
 }
 
 void gui_set_count(int id, int value)
@@ -1000,8 +573,8 @@ void gui_set_clock(int id, int value)
     widget[id].value = value;
 }
 
-void gui_set_color(int id, const GLubyte *c0,
-                           const GLubyte *c1)
+void gui_set_color(int id, const float *c0,
+                           const float *c1)
 {
     if (id)
     {
@@ -1010,13 +583,22 @@ void gui_set_color(int id, const GLubyte *c0,
 
         if (widget[id].color0 != c0 || widget[id].color1 != c1)
         {
-            int w = widget[id].text_w;
-            int h = widget[id].text_h;
-
             widget[id].color0 = c0;
             widget[id].color1 = c1;
 
-            gui_geom_text(id, -w / 2, -h / 2, w, h, c0, c1);
+            if (glIsList(widget[id].text_obj))
+            {
+                int w, h;
+
+                glDeleteLists(widget[id].text_obj, 1);
+
+                w = widget[id].text_obj_w;
+                h = widget[id].text_obj_h;
+
+                widget[id].text_obj = gui_list(-w / 2, -h / 2, w, h,
+                                               widget[id].color0,
+                                               widget[id].color1);
+            }
         }
     }
 }
@@ -1025,36 +607,25 @@ void gui_set_multi(int id, const char *text)
 {
     const char *p;
 
-    char s[GUI_LINES][MAXSTR];
-    int i, sc, lc, jd;
+    char s[8][MAXSTR];
+    int  i, j, jd;
 
     size_t n = 0;
 
-    /* Count available labels. */
-
-    for (lc = 0, jd = widget[id].car; jd; lc++, jd = widget[jd].cdr);
-
     /* Copy each delimited string to a line buffer. */
 
-    for (p = text, sc = 0; *p && sc < lc; sc++)
+    for (p = text, j = 0; *p && j < 8; j++)
     {
-        /* Support both '\\' and '\n' as delimiters. */
+        strncpy(s[j], p, (n = strcspn(p, "\\")));
+        s[j][n] = 0;
 
-        strncpy(s[sc], p, (n = strcspn(p, "\\\n")));
-        s[sc][n] = 0;
-
-        if (n > 0 && s[sc][n - 1] == '\r')
-            s[sc][n - 1] = 0;
-
-        p += n;
-
-        if (*p == '\\' || *p == '\n') p++;
+        if (*(p += n) == '\\') p++;
     }
 
     /* Set the label value for each line. */
 
-    for (i = lc - 1, jd = widget[id].car; i >= 0; i--, jd = widget[jd].cdr)
-        gui_set_label(jd, i < sc ? s[i] : "");
+    for (i = j - 1, jd = widget[id].car; i >= 0 && jd; i--, jd = widget[jd].cdr)
+        gui_set_label(jd, s[i]);
 }
 
 void gui_set_trunc(int id, enum trunc trunc)
@@ -1062,132 +633,17 @@ void gui_set_trunc(int id, enum trunc trunc)
     widget[id].trunc = trunc;
 }
 
-void gui_set_font(int id, const char *path)
-{
-    widget[id].font = gui_font_load(path);
-}
-
-void gui_set_fill(int id)
-{
-    widget[id].flags |= GUI_FILL;
-}
-
-/*
- * Activate a widget, allowing it  to behave as a normal state widget.
- * This may  be used  to create  image buttons, or  cause an  array of
- * widgets to behave as a single state widget.
- */
-int gui_set_state(int id, int token, int value)
-{
-    widget[id].flags |= GUI_STATE;
-    widget[id].token  = token;
-    widget[id].value  = value;
-
-    return id;
-}
-
-void gui_set_hilite(int id, int hilite)
-{
-    if (hilite)
-        widget[id].flags |= GUI_HILITE;
-    else
-        widget[id].flags &= ~GUI_HILITE;
-}
-
-void gui_set_rect(int id, int rect)
-{
-    widget[id].rect   = rect;
-    widget[id].flags |= GUI_RECT;
-}
-
-void gui_clr_rect(int id)
-{
-    int jd;
-
-    widget[id].flags &= ~GUI_RECT;
-
-    for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-        gui_clr_rect(jd);
-}
-
-void gui_set_cursor(int st)
-{
-    cursor_st = st;
-}
-
-void gui_set_hidden(int id, int hidden)
-{
-    if (id)
-        widget[id].hidden = hidden ? 1u : 0;
-}
-
 /*---------------------------------------------------------------------------*/
-
-/*
- * Compute widget size requirements.
- */
-static void gui_widget_size(int id)
-{
-    int i;
-
-    const int s = MIN(video.device_w, video.device_h);
-
-    switch (widget[id].type)
-    {
-        case GUI_IMAGE:
-            /* Convert from integer-encoded fractions to window pixels. */
-
-            widget[id].w = ROUND(((float) widget[id].text_w / 1000.0f) * (float) s);
-            widget[id].h = ROUND(((float) widget[id].text_h / 1000.0f) * (float) s);
-
-            break;
-
-        case GUI_BUTTON:
-        case GUI_LABEL:
-            widget[id].w = widget[id].text_w;
-            widget[id].h = widget[id].text_h;
-            break;
-
-        case GUI_COUNT:
-            widget[id].w = 0;
-
-            for (i = widget[id].init_value; i; i /= 10)
-                widget[id].w += widget[digit_id[widget[id].size][0]].text_w;
-
-            widget[id].h = widget[digit_id[widget[id].size][0]].text_h;
-
-            break;
-
-        case GUI_CLOCK:
-            widget[id].w = widget[digit_id[widget[id].size][0]].text_w * 6;
-            widget[id].h = widget[digit_id[widget[id].size][0]].text_h;
-            break;
-
-        default:
-            widget[id].w = 0;
-            widget[id].h = 0;
-            break;
-    }
-}
 
 int gui_image(int pd, const char *file, int w, int h)
 {
     int id;
 
-    const int s = MIN(video.device_w, video.device_h);
-
     if ((id = gui_widget(pd, GUI_IMAGE)))
     {
-        widget[id].image  = make_image_from_file(file, IF_MIPMAP);
-
-        /* Convert window pixels to integer-encoded fractions. */
-
-        widget[id].text_w = ROUND(((float) w / (float) s) * 1000.0f);
-        widget[id].text_h = ROUND(((float) h / (float) s) * 1000.0f);
-
-        widget[id].flags |= GUI_RECT;
-
-        gui_widget_size(id);
+        widget[id].text_img = make_image_from_file(file);
+        widget[id].w = w;
+        widget[id].h = h;
     }
     return id;
 }
@@ -1206,148 +662,131 @@ int gui_state(int pd, const char *text, int size, int token, int value)
 {
     int id;
 
-    if ((id = gui_widget(pd, GUI_BUTTON)))
+    if ((id = gui_widget(pd, GUI_STATE)))
     {
-        TTF_Font *ttf = fonts[widget[id].font].ttf[size];
-
-        widget[id].flags |= (GUI_STATE | GUI_RECT);
-
-        widget[id].init_text = strdup(text);
-
-        widget[id].text = strdup(text);
-
-        size_image_from_font(NULL, NULL,
-                             &widget[id].text_w,
-                             &widget[id].text_h,
-                             text, ttf);
-
+        widget[id].text_img = make_image_from_font(NULL, NULL,
+                                                   &widget[id].w,
+                                                   &widget[id].h,
+                                                   text, font[size]);
         widget[id].size  = size;
         widget[id].token = token;
         widget[id].value = value;
-
-        gui_widget_size(id);
     }
     return id;
 }
 
-int gui_label(int pd, const char *text, int size, const GLubyte *c0,
-                                                  const GLubyte *c1)
+int gui_label(int pd, const char *text, int size, int rect, const float *c0,
+                                                            const float *c1)
 {
     int id;
 
     if ((id = gui_widget(pd, GUI_LABEL)))
     {
-        TTF_Font *ttf = fonts[widget[id].font].ttf[size];
-
-        widget[id].init_text = strdup(text);
-
-        widget[id].text = strdup(text);
-
-        size_image_from_font(NULL, NULL,
-                             &widget[id].text_w,
-                             &widget[id].text_h,
-                             text, ttf);
+        widget[id].text_img = make_image_from_font(NULL, NULL,
+                                                   &widget[id].w,
+                                                   &widget[id].h,
+                                                   text, font[size]);
         widget[id].size   = size;
         widget[id].color0 = c0 ? c0 : gui_yel;
         widget[id].color1 = c1 ? c1 : gui_red;
-        widget[id].flags |= GUI_RECT;
-
-        gui_widget_size(id);
+        widget[id].rect   = rect;
     }
     return id;
 }
 
-int gui_count(int pd, int value, int size)
+int gui_count(int pd, int value, int size, int rect)
 {
-    int id;
+    int i, id;
 
     if ((id = gui_widget(pd, GUI_COUNT)))
     {
-        widget[id].init_value = value;
+        for (i = value; i; i /= 10)
+            widget[id].w += digit_w[size][0];
 
+        widget[id].h      = digit_h[size][0];
         widget[id].value  = value;
         widget[id].size   = size;
         widget[id].color0 = gui_yel;
         widget[id].color1 = gui_red;
-        widget[id].flags |= GUI_RECT;
-
-        gui_widget_size(id);
+        widget[id].rect   = rect;
     }
     return id;
 }
 
-int gui_clock(int pd, int value, int size)
+int gui_clock(int pd, int value, int size, int rect)
 {
     int id;
 
     if ((id = gui_widget(pd, GUI_CLOCK)))
     {
-        widget[id].init_value = value;
-
+        widget[id].w      = digit_w[size][0] * 6;
+        widget[id].h      = digit_h[size][0];
         widget[id].value  = value;
         widget[id].size   = size;
         widget[id].color0 = gui_yel;
         widget[id].color1 = gui_red;
-        widget[id].flags |= GUI_RECT;
-
-        gui_widget_size(id);
+        widget[id].rect   = rect;
     }
     return id;
 }
 
 int gui_space(int pd)
 {
-    return gui_widget(pd, GUI_SPACE);
+    int id;
+
+    if ((id = gui_widget(pd, GUI_SPACE)))
+    {
+        widget[id].w = 0;
+        widget[id].h = 0;
+    }
+    return id;
 }
 
 /*---------------------------------------------------------------------------*/
-
 /*
  * Create  a multi-line  text box  using a  vertical array  of labels.
  * Parse the  text for '\'  characters and treat them  as line-breaks.
  * Preserve the rect specification across the entire array.
  */
 
-int gui_multi(int pd, const char *text, int size, const GLubyte *c0,
-                                                  const GLubyte *c1)
+int gui_multi(int pd, const char *text, int size, int rect, const float *c0,
+                                                            const float *c1)
 {
     int id = 0;
 
-    if (text && *text && (id = gui_varray(pd)))
+    if (text && (id = gui_varray(pd)))
     {
         const char *p;
 
-        char s[GUI_LINES][MAXSTR];
+        char s[8][MAXSTR];
+        int  r[8];
         int  i, j;
 
         size_t n = 0;
 
         /* Copy each delimited string to a line buffer. */
 
-        for (p = text, j = 0; *p && j < GUI_LINES; j++)
+        for (p = text, j = 0; *p && j < 8; j++)
         {
-            /* Support both '\\' and '\n' as delimiters. */
-
-            strncpy(s[j], p, (n = strcspn(p, "\\\n")));
+            strncpy(s[j], p, (n = strcspn(p, "\\")));
             s[j][n] = 0;
+            r[j]    = 0;
 
-            if (n > 0 && s[j][n - 1] == '\r')
-                s[j][n - 1] = 0;
+            if (*(p += n) == '\\') p++;
+        }
 
-            p += n;
+        /* Set the curves for the first and last lines. */
 
-            if (*p == '\\' || *p == '\n') p++;
+        if (j > 0)
+        {
+            r[0]     |= rect & (GUI_NW | GUI_NE);
+            r[j - 1] |= rect & (GUI_SW | GUI_SE);
         }
 
         /* Create a label widget for each line. */
 
         for (i = 0; i < j; i++)
-            gui_label(id, s[i], size, c0, c1);
-
-        /* Set rectangle on the container. */
-
-        widget[id].flags |= GUI_RECT;
-        widget[id].flags |= GUI_CLIP;
+            gui_label(id, s[i], size, r[i], c0, c1);
     }
     return id;
 }
@@ -1444,28 +883,33 @@ static void gui_vstack_up(int id)
 
 static void gui_button_up(int id)
 {
+    /* Store width and height for later use in text rendering. */
+
+    widget[id].text_obj_w = widget[id].w;
+    widget[id].text_obj_h = widget[id].h;
+
     if (widget[id].w < widget[id].h && widget[id].w > 0)
         widget[id].w = widget[id].h;
 
     /* Padded text elements look a little nicer. */
 
-    if (widget[id].w < video.device_w)
-        widget[id].w += padding;
-    if (widget[id].h < video.device_h)
-        widget[id].h += padding;
+    if (widget[id].w < config_get_d(CONFIG_WIDTH))
+        widget[id].w += radius;
+    if (widget[id].h < config_get_d(CONFIG_HEIGHT))
+        widget[id].h += radius;
 
-    /* A button should be at least wide enough to accomodate the borders. */
+    /* A button should be at least wide enough to accomodate the rounding. */
 
-    if (widget[id].w < borders[0] + borders[1])
-        widget[id].w = borders[0] + borders[1];
-    if (widget[id].h < borders[2] + borders[3])
-        widget[id].h = borders[2] + borders[3];
+    if (widget[id].w < 2 * radius)
+        widget[id].w = 2 * radius;
+    if (widget[id].h < 2 * radius)
+        widget[id].h = 2 * radius;
 }
 
 static void gui_widget_up(int id)
 {
     if (id)
-        switch (widget[id].type)
+        switch (widget[id].type & GUI_TYPE)
         {
         case GUI_HARRAY: gui_harray_up(id); break;
         case GUI_VARRAY: gui_varray_up(id); break;
@@ -1537,7 +981,7 @@ static void gui_varray_dn(int id, int x, int y, int w, int h)
 
 static void gui_hstack_dn(int id, int x, int y, int w, int h)
 {
-    int jd, jx = x, jw = 0, dw = 0, c = 0;
+    int jd, jx = x, jw = 0, c = 0;
 
     widget[id].x = x;
     widget[id].y = y;
@@ -1547,27 +991,18 @@ static void gui_hstack_dn(int id, int x, int y, int w, int h)
     /* Measure the total width requested by non-filler children. */
 
     for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-        if (widget[jd].type == GUI_FILLER)
+        if ((widget[jd].type & GUI_TYPE) == GUI_FILLER)
             c += 1;
-        else if (widget[jd].flags & GUI_FILL)
-        {
-            c  += 1;
-            jw += widget[jd].w;
-        }
         else
             jw += widget[jd].w;
 
     /* Give non-filler children their requested space.   */
     /* Distribute the rest evenly among filler children. */
 
-    dw = c > 0 ? (w - jw) / c : 0;
-
     for (jd = widget[id].car; jd; jd = widget[jd].cdr)
     {
-        if (widget[jd].type == GUI_FILLER)
-            gui_widget_dn(jd, jx, y, dw, h);
-        else if (widget[jd].flags & GUI_FILL)
-            gui_widget_dn(jd, jx, y, widget[jd].w + dw, h);
+        if ((widget[jd].type & GUI_TYPE) == GUI_FILLER)
+            gui_widget_dn(jd, jx, y, (w - jw) / c, h);
         else
             gui_widget_dn(jd, jx, y, widget[jd].w, h);
 
@@ -1587,13 +1022,8 @@ static void gui_vstack_dn(int id, int x, int y, int w, int h)
     /* Measure the total height requested by non-filler children. */
 
     for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-        if (widget[jd].type == GUI_FILLER)
+        if ((widget[jd].type & GUI_TYPE) == GUI_FILLER)
             c += 1;
-        else if (widget[jd].flags & GUI_FILL)
-        {
-            c  += 1;
-            jh += widget[jd].h;
-        }
         else
             jh += widget[jd].h;
 
@@ -1602,10 +1032,8 @@ static void gui_vstack_dn(int id, int x, int y, int w, int h)
 
     for (jd = widget[id].car; jd; jd = widget[jd].cdr)
     {
-        if (widget[jd].type == GUI_FILLER)
+        if ((widget[jd].type & GUI_TYPE) == GUI_FILLER)
             gui_widget_dn(jd, x, jy, w, (h - jh) / c);
-        else if (widget[jd].flags & GUI_FILL)
-            gui_widget_dn(jd, x, jy, w, widget[jd].h + (h - jh) / c);
         else
             gui_widget_dn(jd, x, jy, w, widget[jd].h);
 
@@ -1625,16 +1053,30 @@ static void gui_filler_dn(int id, int x, int y, int w, int h)
 
 static void gui_button_dn(int id, int x, int y, int w, int h)
 {
+    /* Recall stored width and height for text rendering. */
+
+    int W = widget[id].text_obj_w;
+    int H = widget[id].text_obj_h;
+    int R = widget[id].rect;
+
+    const float *c0 = widget[id].color0;
+    const float *c1 = widget[id].color1;
+
     widget[id].x = x;
     widget[id].y = y;
     widget[id].w = w;
     widget[id].h = h;
+
+    /* Create display lists for the text area and rounded rectangle. */
+
+    widget[id].text_obj = gui_list(-W / 2, -H / 2, W, H, c0, c1);
+    widget[id].rect_obj = gui_rect(-w / 2, -h / 2, w, h, R, radius);
 }
 
 static void gui_widget_dn(int id, int x, int y, int w, int h)
 {
     if (id)
-        switch (widget[id].type)
+        switch (widget[id].type & GUI_TYPE)
         {
         case GUI_HARRAY: gui_harray_dn(id, x, y, w, h); break;
         case GUI_VARRAY: gui_varray_dn(id, x, y, w, h); break;
@@ -1647,133 +1089,6 @@ static void gui_widget_dn(int id, int x, int y, int w, int h)
 }
 
 /*---------------------------------------------------------------------------*/
-
-static void gui_widget_offset(int id, int pd)
-{
-    if (id)
-    {
-        int jd;
-
-        if (!(widget[id].flags & GUI_OFFSET))
-        {
-            for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-                gui_widget_offset(jd, 0);
-
-            return;
-        }
-
-        /* HACK: restart animations in case we got here via resize event. */
-        widget[id].slide_time = 0.0f;
-
-        widget[id].offset_init_x = widget[id].offset_x = 0.0f;
-        widget[id].offset_init_y = widget[id].offset_y = 0.0f;
-
-        if (widget[id].slide_flags & GUI_FLING)
-        {
-            // Offset position is a full frame away.
-
-            if (widget[id].slide_flags & GUI_W)
-                widget[id].offset_init_x = (float) -video.device_w;
-
-            if (widget[id].slide_flags & GUI_E)
-                widget[id].offset_init_x = (float) +video.device_w;
-
-            if (widget[id].slide_flags & GUI_S)
-                widget[id].offset_init_y = (float) -video.device_h;
-
-            if (widget[id].slide_flags & GUI_N)
-                widget[id].offset_init_y = (float) +video.device_h;
-        }
-        else
-        {
-            // Offset position is just offscreen.
-
-            if (pd)
-            {
-                // If parent is also offset, inherit.
-
-                if (widget[id].slide_flags & GUI_W)
-                    widget[id].offset_init_x = widget[pd].offset_init_x;
-
-                if (widget[id].slide_flags & GUI_E)
-                    widget[id].offset_init_x = widget[pd].offset_init_x;
-
-                if (widget[id].slide_flags & GUI_S)
-                    widget[id].offset_init_y = widget[pd].offset_init_y;
-
-                if (widget[id].slide_flags & GUI_N)
-                    widget[id].offset_init_y = widget[pd].offset_init_y;
-            }
-            else
-            {
-                if (widget[id].slide_flags & GUI_W)
-                    widget[id].offset_init_x = -widget[id].x - widget[id].w;
-
-                if (widget[id].slide_flags & GUI_E)
-                    widget[id].offset_init_x = video.device_w - widget[id].x + 1;
-
-                if (widget[id].slide_flags & GUI_S)
-                    widget[id].offset_init_y = -widget[id].y - widget[id].h - 1;
-
-                if (widget[id].slide_flags & GUI_N)
-                    widget[id].offset_init_y = video.device_h - widget[id].y;
-            }
-        }
-
-        if (!(widget[id].slide_flags & GUI_BACKWARD))
-        {
-            widget[id].offset_x = widget[id].offset_init_x;
-            widget[id].offset_y = widget[id].offset_init_y;
-        }
-
-        for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-            gui_widget_offset(jd, id);
-    }
-}
-
-void gui_set_slide(int id, int flags, float delay, float t, float stagger)
-{
-    if (id)
-    {
-        int jd, c = 0;
-
-        widget[id].flags |= GUI_OFFSET;
-
-        widget[id].slide_flags = flags;
-        widget[id].slide_delay = delay;
-        widget[id].slide_dur = t;
-        widget[id].slide_time = 0.0f;
-
-        for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-            c++;
-
-        for (jd = widget[id].car; jd; jd = widget[jd].cdr, c--)
-            gui_set_slide(jd, flags, delay + (stagger * (c - 1)), t, 0.0f);
-    }
-}
-
-void gui_slide(int id, int flags, float delay, float t, float stagger)
-{
-    if (id)
-    {
-        gui_set_slide(id, flags, delay, t, stagger);
-        gui_widget_offset(id, 0);
-    }
-}
-
-/*---------------------------------------------------------------------------*/
-
-static void gui_render_text(int id)
-{
-    int jd;
-
-    if (widget[id].type != GUI_FREE && widget[id].text)
-        gui_set_label(id, widget[id].text);
-
-    for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-        gui_render_text(jd);
-}
-
 /*
  * During GUI layout, we make a bottom-up pass to determine total area
  * requirements for  the widget  tree.  We position  this area  to the
@@ -1785,17 +1100,13 @@ void gui_layout(int id, int xd, int yd)
 {
     int x, y;
 
-    int w, W = video.device_w;
-    int h, H = video.device_h;
-
-    widget[id].flags |= GUI_LAYOUT;
-    widget[id].layout_xd = xd;
-    widget[id].layout_yd = yd;
+    int w, W = config_get_d(CONFIG_WIDTH);
+    int h, H = config_get_d(CONFIG_HEIGHT);
 
     gui_widget_up(id);
 
-    w = MIN(widget[id].w, W - padding * 2);
-    h = MIN(widget[id].h, H - padding * 2);
+    w = widget[id].w;
+    h = widget[id].h;
 
     if      (xd < 0) x = 0;
     else if (xd > 0) x = (W - w);
@@ -1806,16 +1117,6 @@ void gui_layout(int id, int xd, int yd)
     else             y = (H - h) / 2;
 
     gui_widget_dn(id, x, y, w, h);
-
-    /* Initialize animation state. */
-
-    gui_widget_offset(id, 0);
-
-    /* Set up GUI rendering state. */
-
-    gui_geom_widget(id, 0);
-
-    gui_render_text(id);
 
     /* Hilite the widget under the cursor, if any. */
 
@@ -1828,10 +1129,8 @@ int gui_search(int id, int x, int y)
 
     /* Search the hierarchy for the widget containing the given point. */
 
-    if (id &&
-        (widget[id].type == GUI_ROOT ||
-         (widget[id].x <= x && x < widget[id].x + widget[id].w &&
-          widget[id].y <= y && y < widget[id].y + widget[id].h)))
+    if (id && (widget[id].x <= x && x < widget[id].x + widget[id].w &&
+               widget[id].y <= y && y < widget[id].y + widget[id].h))
     {
         if (gui_hot(id))
             return id;
@@ -1843,21 +1142,18 @@ int gui_search(int id, int x, int y)
     return 0;
 }
 
-int gui_child(int id, int index)
+/*
+ * Activate a widget, allowing it  to behave as a normal state widget.
+ * This may  be used  to create  image buttons, or  cause an  array of
+ * widgets to behave as a single state widget.
+ */
+int gui_active(int id, int token, int value)
 {
-    if (id)
-    {
-        int jd, c = 0, i;
+    widget[id].type |= GUI_STATE;
+    widget[id].token = token;
+    widget[id].value = value;
 
-        for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-            c++;
-
-        for (jd = widget[id].car, i = c - 1; jd; jd = widget[jd].cdr, i--)
-            if (i == index)
-                return jd;
-    }
-
-    return 0;
+    return id;
 }
 
 int gui_delete(int id)
@@ -1869,127 +1165,79 @@ int gui_delete(int id)
         gui_delete(widget[id].cdr);
         gui_delete(widget[id].car);
 
-        if (widget[id].text)
-        {
-            free(widget[id].text);
-            widget[id].text = NULL;
-        }
-
-        if (widget[id].init_text)
-        {
-            free(widget[id].init_text);
-            widget[id].init_text = NULL;
-        }
-
         /* Release any GL resources held by this widget. */
 
-        if (widget[id].image)
-            glDeleteTextures(1, &widget[id].image);
+        if (glIsTexture(widget[id].text_img))
+            glDeleteTextures(1, &widget[id].text_img);
+
+        if (glIsList(widget[id].text_obj))
+            glDeleteLists(widget[id].text_obj, 1);
+        if (glIsList(widget[id].rect_obj))
+            glDeleteLists(widget[id].rect_obj, 1);
 
         /* Mark this widget unused. */
 
-        widget[id].type  = GUI_FREE;
-        widget[id].flags = 0;
-        widget[id].image = 0;
-        widget[id].cdr   = 0;
-        widget[id].car   = 0;
-
-        /* Clear focus from this widget. */
-
-        if (active == id)
-            active = 0;
+        widget[id].type     = GUI_FREE;
+        widget[id].text_img = 0;
+        widget[id].text_obj = 0;
+        widget[id].rect_obj = 0;
+        widget[id].cdr      = 0;
+        widget[id].car      = 0;
     }
     return 0;
 }
 
-/*
- * Delete this widget and update the layout of its parent widget.
- */
-void gui_remove(int id)
-{
-    if (id && widget[id].type != GUI_FREE)
-    {
-        int pd = 0;
-        int i;
-
-        for (i = 1; i < WIDGET_MAX; ++i)
-            if (widget[i].type != GUI_FREE)
-            {
-                int jd, pjd;
-
-                for (pjd = 0, jd = widget[i].car; jd; pjd = jd, jd = widget[jd].cdr)
-                    if (jd == id)
-                    {
-                        /* Note the parent widget. */
-
-                        pd = i;
-
-                        /* Remove from linked list. */
-
-                        if (pjd)
-                            widget[pjd].cdr = widget[jd].cdr; /* prev = next */
-                        else
-                            widget[i].car = widget[jd].cdr; /* head = next */
-                    }
-            }
-
-        /* Update parent widget layout. */
-
-        if (pd)
-        {
-            gui_widget_dn(pd, widget[pd].x, widget[pd].y, widget[pd].w, widget[pd].h);
-            gui_geom_widget(pd, widget[pd].flags);
-        }
-
-        gui_delete(id);
-
-        transition_remove(id);
-    }
-}
-
 /*---------------------------------------------------------------------------*/
 
-static void gui_paint_rect(int id, int st, int flags)
+static void gui_paint_rect(int id, int st)
 {
-    int jd, i = 0;
+    static const GLfloat back[4][4] = {
+        { 0.1f, 0.1f, 0.1f, 0.5f },             /* off and inactive    */
+        { 0.5f, 0.5f, 0.5f, 0.8f },             /* off and   active    */
+        { 1.0f, 0.7f, 0.3f, 0.5f },             /* on  and inactive    */
+        { 1.0f, 0.7f, 0.3f, 0.8f },             /* on  and   active    */
+    };
 
-    if (widget[id].hidden)
-        return;
+    int jd, i = 0;
 
     /* Use the widget status to determine the background color. */
 
-    i = st | (((widget[id].flags & GUI_HILITE) ? 2 : 0) |
-              ((id == active)                  ? 1 : 0));
+    if (gui_hot(id))
+        i = st | (((widget[id].value) ? 2 : 0) |
+                  ((id == active)     ? 1 : 0));
 
-    if ((widget[id].flags & GUI_RECT) && !(flags & GUI_RECT))
+    switch (widget[id].type & GUI_TYPE)
     {
-        /* Draw a leaf's background, colored by widget state. */
+    case GUI_IMAGE:
+    case GUI_SPACE:
+    case GUI_FILLER:
+        break;
 
-        glPushMatrix();
-        {
-            glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2 + widget[id].offset_x),
-                         (GLfloat) (widget[id].y + widget[id].h / 2 + widget[id].offset_y), 0.f);
-
-            glBindTexture_(GL_TEXTURE_2D, curr_theme.tex[i]);
-            draw_rect(id);
-        }
-        glPopMatrix();
-
-        flags |= GUI_RECT;
-    }
-
-    switch (widget[id].type)
-    {
     case GUI_HARRAY:
     case GUI_VARRAY:
     case GUI_HSTACK:
     case GUI_VSTACK:
-    case GUI_ROOT:
 
         /* Recursively paint all subwidgets. */
 
         for (jd = widget[id].car; jd; jd = widget[jd].cdr)
-            gui_paint_rect(jd, i, flags);
+            gui_paint_rect(jd, i);
+
+        break;
+
+    default:
+
+        /* Draw a leaf's background, colored by widget state. */
+
+        glPushMatrix();
+        {
+            glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2),
+                         (GLfloat) (widget[id].y + widget[id].h / 2), 0.f);
+
+            glColor4fv(back[i]);
+            glCallList(widget[id].rect_obj);
+        }
+        glPopMatrix();
 
         break;
     }
@@ -2005,37 +1253,18 @@ static void gui_paint_array(int id)
 
     glPushMatrix();
     {
-        GLfloat cx = widget[id].x + widget[id].w / 2.0f + widget[id].offset_x;
-        GLfloat cy = widget[id].y + widget[id].h / 2.0f + widget[id].offset_y;
+        GLfloat cx = widget[id].x + widget[id].w / 2.0f;
+        GLfloat cy = widget[id].y + widget[id].h / 2.0f;
         GLfloat ck = widget[id].scale;
 
-        if (1.0f < ck || ck < 1.0f)
-        {
-            glTranslatef(+cx, +cy, 0.0f);
-            glScalef(ck, ck, ck);
-            glTranslatef(-cx, -cy, 0.0f);
-        }
+        glTranslatef(+cx, +cy, 0.0f);
+        glScalef(ck, ck, ck);
+        glTranslatef(-cx, -cy, 0.0f);
 
         /* Recursively paint all subwidgets. */
 
-        if (widget[id].flags & GUI_CLIP)
-        {
-            glScissor(
-                widget[id].x + widget[id].offset_x,
-                widget[id].y + widget[id].offset_y,
-                widget[id].w,
-                widget[id].h
-            );
-            glEnable(GL_SCISSOR_TEST);
-        }
-
         for (jd = widget[id].car; jd; jd = widget[jd].cdr)
             gui_paint_text(jd);
-
-        if (widget[id].flags & GUI_CLIP)
-        {
-            glDisable(GL_SCISSOR_TEST);
-        }
     }
     glPopMatrix();
 }
@@ -2046,16 +1275,16 @@ static void gui_paint_image(int id)
 
     glPushMatrix();
     {
-        glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2 + widget[id].offset_x),
-                     (GLfloat) (widget[id].y + widget[id].h / 2 + widget[id].offset_y), 0.f);
+        glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2),
+                     (GLfloat) (widget[id].y + widget[id].h / 2), 0.f);
 
         glScalef(widget[id].scale,
                  widget[id].scale,
                  widget[id].scale);
 
-        glBindTexture_(GL_TEXTURE_2D, widget[id].image);
-        glColor4ub(gui_wht[0], gui_wht[1], gui_wht[2], gui_wht[3]);
-        draw_image(id);
+        glBindTexture(GL_TEXTURE_2D, widget[id].text_img);
+        glColor4fv(gui_wht);
+        glCallList(widget[id].rect_obj);
     }
     glPopMatrix();
 }
@@ -2066,10 +1295,12 @@ static void gui_paint_count(int id)
 
     glPushMatrix();
     {
+        glColor4fv(gui_wht);
+
         /* Translate to the widget center, and apply the pulse scale. */
 
-        glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2 + widget[id].offset_x),
-                     (GLfloat) (widget[id].y + widget[id].h / 2 + widget[id].offset_y), 0.f);
+        glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2),
+                     (GLfloat) (widget[id].y + widget[id].h / 2), 0.f);
 
         glScalef(widget[id].scale,
                  widget[id].scale,
@@ -2077,32 +1308,28 @@ static void gui_paint_count(int id)
 
         if (widget[id].value > 0)
         {
-            /* Translate right by half the total width of the rendered value. */
-
-            GLfloat w = -widget[digit_id[i][0]].text_w * 0.5f;
+            /* Translate left by half the total width of the rendered value. */
 
             for (j = widget[id].value; j; j /= 10)
-                w += widget[digit_id[i][j % 10]].text_w * 0.5f;
+                glTranslatef((GLfloat) +digit_w[i][j % 10] / 2.0f, 0.0f, 0.0f);
 
-            glTranslatef(w, 0.0f, 0.0f);
+            glTranslatef((GLfloat) -digit_w[i][0] / 2.0f, 0.0f, 0.0f);
 
-            /* Render each digit, moving left after each. */
+            /* Render each digit, moving right after each. */
 
             for (j = widget[id].value; j; j /= 10)
             {
-                int jd = digit_id[i][j % 10];
-
-                glBindTexture_(GL_TEXTURE_2D, widget[jd].image);
-                draw_text(jd);
-                glTranslatef((GLfloat) -widget[jd].text_w, 0.0f, 0.0f);
+                glBindTexture(GL_TEXTURE_2D, digit_text[i][j % 10]);
+                glCallList(digit_list[i][j % 10]);
+                glTranslatef((GLfloat) -digit_w[i][j % 10], 0.0f, 0.0f);
             }
         }
         else if (widget[id].value == 0)
         {
             /* If the value is zero, just display a zero in place. */
 
-            glBindTexture_(GL_TEXTURE_2D, widget[digit_id[i][0]].image);
-            draw_text(digit_id[i][0]);
+            glBindTexture(GL_TEXTURE_2D, digit_text[i][0]);
+            glCallList(digit_list[i][0]);
         }
     }
     glPopMatrix();
@@ -2118,18 +1345,20 @@ static void gui_paint_clock(int id)
     int ht = ((widget[id].value % 6000) % 100) / 10;
     int ho = ((widget[id].value % 6000) % 100) % 10;
 
-    GLfloat dx_large = (GLfloat) widget[digit_id[i][0]].text_w;
-    GLfloat dx_small = (GLfloat) widget[digit_id[i][0]].text_w * 0.75f;
+    GLfloat dx_large = (GLfloat) digit_w[i][0];
+    GLfloat dx_small = (GLfloat) digit_w[i][0] * 0.75f;
 
     if (widget[id].value < 0)
         return;
 
     glPushMatrix();
     {
+        glColor4fv(gui_wht);
+
         /* Translate to the widget center, and apply the pulse scale. */
 
-        glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2 + widget[id].offset_x),
-                     (GLfloat) (widget[id].y + widget[id].h / 2 + widget[id].offset_y), 0.f);
+        glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2),
+                     (GLfloat) (widget[id].y + widget[id].h / 2), 0.f);
 
         glScalef(widget[id].scale,
                  widget[id].scale,
@@ -2146,75 +1375,67 @@ static void gui_paint_clock(int id)
 
         if (mt > 0)
         {
-            glBindTexture_(GL_TEXTURE_2D, widget[digit_id[i][mt]].image);
-            draw_text(digit_id[i][mt]);
+            glBindTexture(GL_TEXTURE_2D, digit_text[i][mt]);
+            glCallList(digit_list[i][mt]);
             glTranslatef(dx_large, 0.0f, 0.0f);
         }
 
-        glBindTexture_(GL_TEXTURE_2D, widget[digit_id[i][mo]].image);
-        draw_text(digit_id[i][mo]);
+        glBindTexture(GL_TEXTURE_2D, digit_text[i][mo]);
+        glCallList(digit_list[i][mo]);
         glTranslatef(dx_small, 0.0f, 0.0f);
 
         /* Render the colon. */
 
-        glBindTexture_(GL_TEXTURE_2D, widget[digit_id[i][10]].image);
-        draw_text(digit_id[i][10]);
+        glBindTexture(GL_TEXTURE_2D, digit_text[i][10]);
+        glCallList(digit_list[i][10]);
         glTranslatef(dx_small, 0.0f, 0.0f);
 
         /* Render the seconds counter. */
 
-        glBindTexture_(GL_TEXTURE_2D, widget[digit_id[i][st]].image);
-        draw_text(digit_id[i][st]);
+        glBindTexture(GL_TEXTURE_2D, digit_text[i][st]);
+        glCallList(digit_list[i][st]);
         glTranslatef(dx_large, 0.0f, 0.0f);
 
-        glBindTexture_(GL_TEXTURE_2D, widget[digit_id[i][so]].image);
-        draw_text(digit_id[i][so]);
+        glBindTexture(GL_TEXTURE_2D, digit_text[i][so]);
+        glCallList(digit_list[i][so]);
         glTranslatef(dx_small, 0.0f, 0.0f);
 
         /* Render hundredths counter half size. */
 
         glScalef(0.5f, 0.5f, 1.0f);
 
-        glBindTexture_(GL_TEXTURE_2D, widget[digit_id[i][ht]].image);
-        draw_text(digit_id[i][ht]);
+        glBindTexture(GL_TEXTURE_2D, digit_text[i][ht]);
+        glCallList(digit_list[i][ht]);
         glTranslatef(dx_large, 0.0f, 0.0f);
 
-        glBindTexture_(GL_TEXTURE_2D, widget[digit_id[i][ho]].image);
-        draw_text(digit_id[i][ho]);
+        glBindTexture(GL_TEXTURE_2D, digit_text[i][ho]);
+        glCallList(digit_list[i][ho]);
     }
     glPopMatrix();
 }
 
 static void gui_paint_label(int id)
 {
-    /* Short-circuit empty labels. */
-
-    if (widget[id].image == 0)
-        return;
-
     /* Draw the widget text box, textured using the glyph. */
 
     glPushMatrix();
     {
-        glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2 + widget[id].offset_x),
-                     (GLfloat) (widget[id].y + widget[id].h / 2 + widget[id].offset_y), 0.f);
+        glTranslatef((GLfloat) (widget[id].x + widget[id].w / 2),
+                     (GLfloat) (widget[id].y + widget[id].h / 2), 0.f);
 
         glScalef(widget[id].scale,
                  widget[id].scale,
                  widget[id].scale);
 
-        glBindTexture_(GL_TEXTURE_2D, widget[id].image);
-        draw_text(id);
+        glBindTexture(GL_TEXTURE_2D, widget[id].text_img);
+        glCallList(widget[id].text_obj);
     }
     glPopMatrix();
 }
 
 static void gui_paint_text(int id)
 {
-    if (widget[id].hidden)
-        return;
-
-    switch (widget[id].type)
+    switch (widget[id].type & GUI_TYPE)
     {
     case GUI_SPACE:  break;
     case GUI_FILLER: break;
@@ -2222,7 +1443,6 @@ static void gui_paint_text(int id)
     case GUI_VARRAY: gui_paint_array(id); break;
     case GUI_HSTACK: gui_paint_array(id); break;
     case GUI_VSTACK: gui_paint_array(id); break;
-    case GUI_ROOT:   gui_paint_array(id); break;
     case GUI_IMAGE:  gui_paint_image(id); break;
     case GUI_COUNT:  gui_paint_count(id); break;
     case GUI_CLOCK:  gui_paint_clock(id); break;
@@ -2232,25 +1452,25 @@ static void gui_paint_text(int id)
 
 void gui_paint(int id)
 {
-    if (id && widget[id].type != GUI_FREE)
+    if (id)
     {
         video_push_ortho();
         {
+            glEnable(GL_COLOR_MATERIAL);
+            glDisable(GL_LIGHTING);
             glDisable(GL_DEPTH_TEST);
             {
-                draw_enable(GL_FALSE, GL_TRUE, GL_TRUE);
-                gui_paint_rect(id, 0, 0);
+                glDisable(GL_TEXTURE_2D);
+                gui_paint_rect(id, 0);
 
-                draw_enable(GL_TRUE, GL_TRUE, GL_TRUE);
+                glEnable(GL_TEXTURE_2D);
                 gui_paint_text(id);
 
-                if (cursor_st && cursor_id)
-                    gui_paint_image(cursor_id);
-
-                draw_disable();
-                glColor4ub(gui_wht[0], gui_wht[1], gui_wht[2], gui_wht[3]);
+                glColor4fv(gui_wht);
             }
             glEnable(GL_DEPTH_TEST);
+            glEnable(GL_LIGHTING);
+            glDisable(GL_COLOR_MATERIAL);
         }
         video_pop_matrix();
     }
@@ -2266,7 +1486,7 @@ void gui_dump(int id, int d)
     {
         char *type = "?";
 
-        switch (widget[id].type)
+        switch (widget[id].type & GUI_TYPE)
         {
         case GUI_HARRAY: type = "harray"; break;
         case GUI_VARRAY: type = "varray"; break;
@@ -2277,9 +1497,6 @@ void gui_dump(int id, int d)
         case GUI_LABEL:  type = "label";  break;
         case GUI_COUNT:  type = "count";  break;
         case GUI_CLOCK:  type = "clock";  break;
-        case GUI_BUTTON: type = "button"; break;
-        case GUI_SPACE:  type = "space";  break;
-        case GUI_ROOT:   type = "root";   break;
         }
 
         for (i = 0; i < d; i++)
@@ -2301,60 +1518,15 @@ void gui_timer(int id, float dt)
 {
     int jd;
 
-    if (id && widget[id].type != GUI_FREE)
+    if (id)
     {
         for (jd = widget[id].car; jd; jd = widget[jd].cdr)
             gui_timer(jd, dt);
 
-        widget[id].scale -= dt;
-
-        if (widget[id].scale < 1.0f)
+        if (widget[id].scale - 1.0f < dt)
             widget[id].scale = 1.0f;
-
-        if ((widget[id].flags & GUI_OFFSET) && widget[id].slide_time < widget[id].slide_delay + widget[id].slide_dur)
-        {
-            float alpha = 0.0f;
-            int at_end = 0;
-
-            widget[id].slide_time += dt;
-
-            alpha = (widget[id].slide_time - widget[id].slide_delay) / widget[id].slide_dur;
-            alpha = CLAMP(0.0f, alpha, 1.0f);
-
-            at_end = (alpha >= 1.0f);
-
-            if (widget[id].slide_flags & GUI_BACKWARD)
-            {
-                // Approaching offset position.
-
-                if (widget[id].slide_flags & GUI_EASE_ELASTIC)
-                    alpha = easeOutElastic(alpha);
-                else if (widget[id].slide_flags & GUI_EASE_BACK)
-                    alpha = easeOutBack(alpha);
-                else
-                    /* Linear interpolation. */;
-            }
-            else
-            {
-                // Approaching widget position.
-
-                if (widget[id].slide_flags & GUI_EASE_ELASTIC)
-                    alpha = easeInElastic(1.0f - alpha);
-                else if (widget[id].slide_flags & GUI_EASE_BACK)
-                    alpha = easeInBack(1.0f - alpha);
-                else
-                    alpha = 1.0f - alpha;
-            }
-
-            widget[id].offset_x = widget[id].offset_init_x * alpha;
-            widget[id].offset_y = widget[id].offset_init_y * alpha;
-
-            if (at_end && (widget[id].slide_flags & GUI_REMOVE))
-            {
-                gui_remove(id);
-                return;
-            }
-        }
+        else
+            widget[id].scale -= dt;
     }
 }
 
@@ -2373,14 +1545,6 @@ int gui_point(int id, int x, int y)
     x_cache = x;
     y_cache = y;
 
-    /* Move the cursor, if any. */
-
-    if (cursor_id)
-    {
-        widget[cursor_id].x = x - widget[cursor_id].w / 2;
-        widget[cursor_id].y = y - widget[cursor_id].h / 2;
-    }
-
     /* Short-circuit check the current active widget. */
 
     jd = gui_search(active, x, y);
@@ -2389,10 +1553,6 @@ int gui_point(int id, int x, int y)
 
     if (jd == 0)
         jd = gui_search(id, x, y);
-
-    /* Note hovered widget. */
-
-    hovered = jd;
 
     /* If the active widget has changed, return the new active id. */
 
@@ -2407,7 +1567,7 @@ void gui_focus(int i)
     active = i;
 }
 
-int gui_active(void)
+int gui_click(void)
 {
     return active;
 }
@@ -2424,7 +1584,7 @@ int gui_value(int id)
 
 void gui_toggle(int id)
 {
-    widget[id].flags ^= GUI_HILITE;
+    widget[id].value = widget[id].value ? 0 : 1;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -2443,73 +1603,26 @@ static int gui_horz_offset(int id, int jd)
     return  widget[id].x - (widget[jd].x + widget[jd].w);
 }
 
-static int gui_vert_overlap(int id, int jd)
+static int gui_vert_dist(int id, int jd)
 {
-    /* Extent of vertical intersection of id and jd. */
+    /* Vertical distance between the tops of id and jd */
 
-    const int a0 = widget[id].y;
-    const int a1 = widget[id].y + widget[id].h;
-    const int aw = widget[id].h;
-    const int b0 = widget[jd].y;
-    const int b1 = widget[jd].y + widget[jd].h;
-    /* const int bw = widget[jd].h; */
-
-    return aw + MIN(b1 - a1, 0) - MAX(b0 - a0, 0);
+    return abs((widget[id].y + widget[id].h) - (widget[jd].y + widget[jd].h));
 }
 
-static int gui_horz_overlap(int id, int jd)
+static int gui_horz_dist(int id, int jd)
 {
-    /* Extent of horizontal intersection of id and jd. */
+    /* Horizontal distance between the left sides of id and jd */
 
-    const int a0 = widget[id].x;
-    const int a1 = widget[id].x + widget[id].w;
-    const int aw = widget[id].w;
-    const int b0 = widget[jd].x;
-    const int b1 = widget[jd].x + widget[jd].w;
-    /* const int bw = widget[jd].w; */
-
-    return aw + MIN(b1 - a1, 0) - MAX(b0 - a0, 0);
+    return abs(widget[id].x - widget[jd].x);
 }
 
 /*---------------------------------------------------------------------------*/
 
-/*
- * Widget navigation heuristics.
- *
- * People generally read left-to-right and top-to-bottom, and have
- * expectations on how navigation should behave. Thus, we hand-craft a
- * bunch of rules rather than devise a generic algorithm.
- *
- * Horizontal navigation only picks overlapping widgets. Closer is
- * better. Out of multiple closest widgets pick the topmost widget.
- *
- * Vertical navigation picks both overlapping and non-overlapping
- * widgets. Closer is better. Out of multiple closest widgets: if
- * overlapping, pick the leftmost widget; if not overlapping, pick the
- * one with the least negative overlap.
- */
-
-/*
- * Leftmost/topmost is decided by the operator used to test
- * distance. A less-than will pick the first of a group of
- * equal-distance widgets, while a less-or-equal will pick the last
- * one.
- */
-
-/* FIXME This isn't how you factor out reusable code. */
-
-#define CHECK_HORIZONTAL \
-    (o > 0 && (omin > 0 ? d <= dmin : 1))
-
-#define CHECK_VERTICAL                                                  \
-    (omin > 0 ?                                                         \
-     d < dmin :                                                         \
-     (o > 0 ? d <= dmin : (d < dmin || (d == dmin && o > omin))))
-
 static int gui_stick_L(int id, int dd)
 {
     int jd, kd, hd;
-    int d, dmin, o, omin;
+    int o, omin, d, dmin;
 
     /* Find the closest "hot" widget to the left of dd (and inside id) */
 
@@ -2517,8 +1630,8 @@ static int gui_stick_L(int id, int dd)
         return id;
 
     hd = 0;
-    dmin = widget[dd].x - widget[id].x + 1;
-    omin = INT_MIN;
+    omin = widget[dd].x - widget[id].x + 1;
+    dmin = widget[dd].y + widget[dd].h + widget[id].y + widget[id].h;
 
     for (jd = widget[id].car; jd; jd = widget[jd].cdr)
     {
@@ -2526,14 +1639,14 @@ static int gui_stick_L(int id, int dd)
 
         if (kd && kd != dd)
         {
-            d = gui_horz_offset(dd, kd);
-            o = gui_vert_overlap(dd, kd);
+            o = gui_horz_offset(dd, kd);
+            d = gui_vert_dist(dd, kd);
 
-            if (d >= 0 && CHECK_HORIZONTAL)
+            if (0 <= o && o <= omin && d <= dmin)
             {
                 hd = kd;
-                dmin = d;
                 omin = o;
+                dmin = d;
             }
         }
     }
@@ -2544,7 +1657,7 @@ static int gui_stick_L(int id, int dd)
 static int gui_stick_R(int id, int dd)
 {
     int jd, kd, hd;
-    int d, dmin, o, omin;
+    int o, omin, d, dmin;
 
     /* Find the closest "hot" widget to the right of dd (and inside id) */
 
@@ -2552,8 +1665,8 @@ static int gui_stick_R(int id, int dd)
         return id;
 
     hd = 0;
-    dmin = (widget[id].x + widget[id].w) - (widget[dd].x + widget[dd].w) + 1;
-    omin = INT_MIN;
+    omin = (widget[id].x + widget[id].w) - (widget[dd].x + widget[dd].w) + 1;
+    dmin = widget[dd].y + widget[dd].h + widget[id].y + widget[id].h;
 
     for (jd = widget[id].car; jd; jd = widget[jd].cdr)
     {
@@ -2561,14 +1674,14 @@ static int gui_stick_R(int id, int dd)
 
         if (kd && kd != dd)
         {
-            d = gui_horz_offset(kd, dd);
-            o = gui_vert_overlap(dd, kd);
+            o = gui_horz_offset(kd, dd);
+            d = gui_vert_dist(dd, kd);
 
-            if (d >= 0 && CHECK_HORIZONTAL)
+            if (0 <= o && o <= omin && d <= dmin)
             {
                 hd = kd;
-                dmin = d;
                 omin = o;
+                dmin = d;
             }
         }
     }
@@ -2579,7 +1692,7 @@ static int gui_stick_R(int id, int dd)
 static int gui_stick_D(int id, int dd)
 {
     int jd, kd, hd;
-    int d, dmin, o, omin;
+    int o, omin, d, dmin;
 
     /* Find the closest "hot" widget below dd (and inside id) */
 
@@ -2587,8 +1700,8 @@ static int gui_stick_D(int id, int dd)
         return id;
 
     hd = 0;
-    dmin = widget[dd].y - widget[id].y + 1;
-    omin = INT_MIN;
+    omin = widget[dd].y - widget[id].y + 1;
+    dmin = widget[dd].x + widget[dd].w + widget[id].x + widget[id].w;
 
     for (jd = widget[id].car; jd; jd = widget[jd].cdr)
     {
@@ -2596,14 +1709,14 @@ static int gui_stick_D(int id, int dd)
 
         if (kd && kd != dd)
         {
-            d = gui_vert_offset(dd, kd);
-            o = gui_horz_overlap(dd, kd);
+            o = gui_vert_offset(dd, kd);
+            d = gui_horz_dist(dd, kd);
 
-            if (d >= 0 && CHECK_VERTICAL)
+            if (0 <= o && o <= omin && d <= dmin)
             {
                 hd = kd;
-                dmin = d;
                 omin = o;
+                dmin = d;
             }
         }
     }
@@ -2614,7 +1727,7 @@ static int gui_stick_D(int id, int dd)
 static int gui_stick_U(int id, int dd)
 {
     int jd, kd, hd;
-    int d, dmin, o, omin;
+    int o, omin, d, dmin;
 
     /* Find the closest "hot" widget above dd (and inside id) */
 
@@ -2622,8 +1735,8 @@ static int gui_stick_U(int id, int dd)
         return id;
 
     hd = 0;
-    dmin = (widget[id].y + widget[id].h) - (widget[dd].y + widget[dd].h) + 1;
-    omin = INT_MIN;
+    omin = (widget[id].y + widget[id].h) - (widget[dd].y + widget[dd].h) + 1;
+    dmin = widget[dd].x + widget[dd].w + widget[id].x + widget[id].w;
 
     for (jd = widget[id].car; jd; jd = widget[jd].cdr)
     {
@@ -2631,14 +1744,14 @@ static int gui_stick_U(int id, int dd)
 
         if (kd && kd != dd)
         {
-            d = gui_vert_offset(kd, dd);
-            o = gui_horz_overlap(dd, kd);
+            o = gui_vert_offset(kd, dd);
+            d = gui_horz_dist(dd, kd);
 
-            if (d >= 0 && CHECK_VERTICAL)
+            if (0 <= o && o <= omin && d <= dmin)
             {
                 hd = kd;
-                dmin = d;
                 omin = o;
+                dmin = d;
             }
         }
     }
@@ -2694,25 +1807,38 @@ static int gui_wrap_D(int id, int dd)
 
 /*---------------------------------------------------------------------------*/
 
-int gui_stick(int id, int a, float v, int bump)
+/* Flag the axes to prevent uncontrolled scrolling. */
+
+static int xflag = 1;
+static int yflag = 1;
+
+void gui_stuck()
+{
+    /* Force the user to recenter the joystick before the next GUI action. */
+
+    xflag = 0;
+    yflag = 0;
+}
+
+int gui_stick(int id, int x, int y)
 {
     int jd = 0;
 
-    if (!bump)
-        return 0;
-
     /* Find a new active widget in the direction of joystick motion. */
 
-    if      (config_tst_d(CONFIG_JOYSTICK_AXIS_X0, a))
-    {
-        if (v < 0) jd = gui_wrap_L(id, active);
-        if (v > 0) jd = gui_wrap_R(id, active);
-    }
-    else if (config_tst_d(CONFIG_JOYSTICK_AXIS_Y0, a))
-    {
-        if (v < 0) jd = gui_wrap_U(id, active);
-        if (v > 0) jd = gui_wrap_D(id, active);
-    }
+    if (x && -JOY_MID <= x && x <= +JOY_MID)
+        xflag = 1;
+    else if (x < -JOY_MID && xflag && (jd = gui_wrap_L(id, active)))
+        xflag = 0;
+    else if (x > +JOY_MID && xflag && (jd = gui_wrap_R(id, active)))
+        xflag = 0;
+
+    if (y && -JOY_MID <= y && y <= +JOY_MID)
+        yflag = 1;
+    else if (y < -JOY_MID && yflag && (jd = gui_wrap_U(id, active)))
+        yflag = 0;
+    else if (y > +JOY_MID && yflag && (jd = gui_wrap_D(id, active)))
+        yflag = 0;
 
     /* If the active widget has changed, return the new active id. */
 
@@ -2720,75 +1846,6 @@ int gui_stick(int id, int a, float v, int bump)
         return 0;
     else
         return active = jd;
-}
-
-int gui_click(int b, int d)
-{
-    if (b == SDL_BUTTON_LEFT)
-    {
-        if (d)
-        {
-            clicked = hovered;
-            return 0;
-        }
-        else
-        {
-            int c = (clicked && clicked == hovered);
-            clicked = 0;
-            return c;
-        }
-    }
-    return 0;
-}
-
-/*---------------------------------------------------------------------------*/
-
-int gui_navig(int id, int total, int first, int step)
-{
-    int pages = (int) ceil((double) total / step);
-    int page = first / step + 1;
-
-    int prev = (page > 1);
-    int next = (page < pages);
-
-    int jd, kd;
-
-    if ((jd = gui_hstack(id)))
-    {
-        if (next || prev)
-        {
-            gui_maybe(jd, " " GUI_TRIANGLE_RIGHT " ", GUI_NEXT, GUI_NONE, next);
-
-            if ((kd = gui_label(jd, "999/999", GUI_SML, 0, 0)))
-            {
-                char str[16];
-                sprintf(str, "%d/%d", page, pages);
-                gui_set_label(kd, str);
-            }
-
-            gui_maybe(jd, " " GUI_TRIANGLE_LEFT " ", GUI_PREV, GUI_NONE, prev);
-        }
-
-        gui_space(jd);
-
-        gui_start(jd, _("Back"), GUI_SML, GUI_BACK, 0);
-    }
-    return jd;
-}
-
-int gui_maybe(int id, const char *label, int etoken, int dtoken, int enabled)
-{
-    int bd;
-
-    if (!enabled)
-    {
-        bd = gui_state(id, label, GUI_SML, dtoken, 0);
-        gui_set_color(bd, gui_gry, gui_gry);
-    }
-    else
-        bd = gui_state(id, label, GUI_SML, etoken, 0);
-
-    return bd;
 }
 
 /*---------------------------------------------------------------------------*/

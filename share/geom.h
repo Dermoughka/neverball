@@ -1,90 +1,58 @@
 #ifndef GEOM_H
 #define GEOM_H
 
-#include "solid_draw.h"
-#include "common.h"
+/*---------------------------------------------------------------------------*/
+
+#include "solid.h"
 
 /*---------------------------------------------------------------------------*/
 
 #define IMG_SHAD "png/shadow.png"
 
-#define BACK_DIST   256.0f
-#define FAR_DIST    512.0f
 #define JUMP_HEIGHT   2.00f
 #define SWCH_HEIGHT   2.00f
 #define GOAL_HEIGHT   3.00f
-#define ITEM_RADIUS   0.15f
 #define GOAL_SPARKS  64
 
 /*---------------------------------------------------------------------------*/
 
-void geom_init(void);
-void geom_free(void);
-void geom_step(float);
-
-void beam_draw(struct s_rend *, const GLfloat *, const GLfloat *, GLfloat, GLfloat);
-void goal_draw(struct s_rend *, const GLfloat *, GLfloat, GLfloat, GLfloat);
-void jump_draw(struct s_rend *, const GLfloat *, GLfloat, GLfloat);
-void flag_draw(struct s_rend *, const GLfloat *);
-void mark_draw(struct s_rend *);
-void vect_draw(struct s_rend *);
-void back_draw(struct s_rend *);
-
-void item_color(const struct v_item *, float *);
-void item_draw(struct s_rend *, const struct v_item *, const GLfloat *, float);
+void mark_init(int);
+void mark_free(void);
+void mark_draw(void);
 
 /*---------------------------------------------------------------------------*/
 
-void back_init(const char *s);
-void back_free(void);
-void back_draw_easy(void);
+void goal_init(int);
+void goal_free(void);
+void goal_draw(void);
+
+/*---------------------------------------------------------------------------*/
+
+void jump_init(int);
+void jump_free(void);
+void jump_draw(int);
+
+/*---------------------------------------------------------------------------*/
+
+void swch_init(int);
+void swch_free(void);
+void swch_draw(int, int);
+
+/*---------------------------------------------------------------------------*/
+
+void flag_init(int);
+void flag_free(void);
+void flag_draw(void);
 
 /*---------------------------------------------------------------------------*/
 
 void shad_init(void);
 void shad_free(void);
-void shad_draw_set(void);
+void shad_draw_set(const float *, float);
 void shad_draw_clr(void);
 
 /*---------------------------------------------------------------------------*/
 
-enum
-{
-    TEX_STAGE_TEXTURE,
-    TEX_STAGE_SHADOW,
-    TEX_STAGE_CLIP
-};
-
-struct tex_stage
-{
-    GLenum unit;
-    int stage;
-};
-
-struct tex_env
-{
-    void (*conf)(int, int);
-    size_t count;
-    struct tex_stage stages[4];
-};
-
-extern const struct tex_env tex_env_default;
-extern const struct tex_env tex_env_shadow;
-extern const struct tex_env tex_env_shadow_clip;
-extern const struct tex_env tex_env_pose;
-
-extern const struct tex_env *curr_tex_env;
-
-void tex_env_select(const struct tex_env *, ...) NULL_TERMINATED;
-void tex_env_active(const struct tex_env *);
-int  tex_env_stage(int);
-
-/*---------------------------------------------------------------------------*/
-
-void light_reset(void);
-void light_conf(void);
-void light_load(void);
-
-/*---------------------------------------------------------------------------*/
+void fade_draw(float);
 
 #endif

@@ -18,21 +18,17 @@
 #include <math.h>
 
 #include "base_config.h"
+#include "glext.h"
+#include "vec3.h"
 #include "common.h"
-#include "log.h"
 #include "fs.h"
-
-#ifdef _WIN32
-#include <shlobj.h>
-#endif
+#include "dir.h"
+#include "array.h"
 
 /*---------------------------------------------------------------------------*/
 
 static const char *pick_data_path(const char *arg_data_path)
 {
-#ifdef __EMSCRIPTEN__
-    return "/data";
-#else
     static char dir[MAXSTR];
     char *env;
 
@@ -45,36 +41,20 @@ static const char *pick_data_path(const char *arg_data_path)
     if (path_is_abs(CONFIG_DATA))
         return CONFIG_DATA;
 
-    SAFECPY(dir, fs_base_dir());
-    SAFECAT(dir, "/");
-    SAFECAT(dir, CONFIG_DATA);
+    strncpy(dir, fs_base_dir(), sizeof (dir) - 1);
+    strncat(dir, "/",           sizeof (dir) - strlen(dir) - 1);
+    strncat(dir, CONFIG_DATA,   sizeof (dir) - strlen(dir) - 1);
 
     return dir;
-#endif
 }
 
 static const char *pick_home_path(void)
 {
-#ifdef _WIN32
-    static char path[MAX_PATH];
-
-    if (SHGetFolderPath(NULL, CSIDL_PERSONAL, NULL, 0, path) == S_OK)
-    {
-        static char gamepath[MAX_PATH];
-
-        SAFECPY(gamepath, path);
-        SAFECAT(gamepath, "\\My Games");
-
-        if (dir_exists(gamepath) || dir_make(gamepath) == 0)
-            return gamepath;
-
-        return path;
-    }
-    else
-        return fs_base_dir();
-#else
     const char *path;
 
+#ifdef _WIN32
+    return (path = getenv("APPDATA")) ? path : fs_base_dir();
+#else
     return (path = getenv("HOME")) ? path : fs_base_dir();
 #endif
 }
@@ -100,36 +80,14 @@ void config_paths(const char *arg_data_path)
     /* User directory. */
 
     home = pick_home_path();
-
-#ifdef __EMSCRIPTEN__
-    /* Force IndexedDB-backed location created during Module['preRun']. */
-    user = strdup("/neverball");
-#else
     user = concat_string(home, "/", CONFIG_USER, NULL);
-#endif
 
     /* Set up directory for writing, create if needed. */
 
     if (!fs_set_write_dir(user))
     {
-        int success = 0;
-
-        log_printf("Failure to establish write directory. First run?\n");
-
-        if (fs_set_write_dir(home))
-            if (fs_mkdir(CONFIG_USER))
-                if (fs_set_write_dir(user))
-                    success = 1;
-
-        if (success)
-        {
-            log_printf("Write directory established at %s\n", user);
-        }
-        else
-        {
-            log_printf("Write directory not established at %s\n", user);
-            fs_set_write_dir(NULL);
-        }
+        if (fs_set_write_dir(home) && fs_mkdir(CONFIG_USER))
+            fs_set_write_dir(user);
     }
 
     fs_add_path_with_archives(user);

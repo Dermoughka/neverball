@@ -1,13 +1,11 @@
 #ifndef PROGRESS_H
 #define PROGRESS_H
 
-#include "level.h"
-
 /*---------------------------------------------------------------------------*/
 
 void progress_init(int);
 
-int  progress_play(struct level *);
+int  progress_play(int level);
 void progress_step(void);
 void progress_stat(int status);
 void progress_stop(void);
@@ -29,11 +27,11 @@ int  progress_last(void);
 int  progress_lvl_high(void);
 int  progress_set_high(void);
 
-struct level *curr_level(void);
-
+int  curr_level(void);
 int  curr_balls(void);
 int  curr_score(void);
 int  curr_mode (void);
+int  curr_bonus(void);
 int  curr_goal (void);
 
 int  progress_time_rank(void);
@@ -53,7 +51,6 @@ enum
 
     MODE_CHALLENGE,
     MODE_NORMAL,
-    MODE_STANDALONE,
 
     MODE_MAX
 };

@@ -2,7 +2,7 @@
 {
 "classname" "worldspawn"
 "coin_hs" "220 140"
-"time_hs" "550 1000"
+"time_hs" "550 3000"
 "goal_hs" "800 4000"
 "goal" "24"
 "time" "9000"
@@ -10,7 +10,7 @@
 "shot" "shot-easy/greed.jpg"
 "grad" "back/space.png"
 "back" "map-back/jupiter.sol"
-"version" "1.1"
+"version" "1"
 "author" "Robert Kooima"
 "message" "Each bridge is narrower than the one before.\But each pays better than the last as well!\You get to decide how far you go on this one.\"
 // brush 0

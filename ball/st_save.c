@@ -16,7 +16,6 @@
 #include <ctype.h>
 
 #include "gui.h"
-#include "transition.h"
 #include "util.h"
 #include "audio.h"
 #include "config.h"
@@ -24,12 +23,16 @@
 #include "progress.h"
 #include "text.h"
 #include "common.h"
-#include "key.h"
 
 #include "game_common.h"
 
-#include "st_save.h"
 #include "st_shared.h"
+#include "st_save.h"
+
+extern struct state st_save;
+extern struct state st_clobber;
+
+static char filename[MAXSTR];
 
 /*---------------------------------------------------------------------------*/
 
@@ -38,6 +41,14 @@ static struct state *cancel_state;
 
 int goto_save(struct state *ok, struct state *cancel)
 {
+    const char *name;
+
+    name = demo_format_name(config_get_s(CONFIG_REPLAY_NAME),
+                            set_id(curr_set()),
+                            level_name(curr_level()));
+
+    strncpy(filename, name, sizeof (filename) - 1);
+
     ok_state     = ok;
     cancel_state = cancel;
 
@@ -48,61 +59,62 @@ int goto_save(struct state *ok, struct state *cancel)
 
 static int file_id;
 
-enum
-{
-    SAVE_SAVE = GUI_LAST
-};
+#define SAVE_SAVE   -1
+#define SAVE_CANCEL -2
 
-static int save_action(int tok, int val)
+static int save_action(int i)
 {
+    char *n;
+
     audio_play(AUD_MENU, 1.0f);
 
-    switch (tok)
+    switch (i)
     {
-    case GUI_BACK:
-        return exit_state(cancel_state);
-
     case SAVE_SAVE:
-        if (strlen(text_input) == 0)
+        n = filename;
+
+        if (strlen(n) == 0)
             return 1;
 
-        if (demo_exists(text_input))
-        {
+        if (demo_exists(n))
             return goto_state(&st_clobber);
-        }
         else
         {
-            demo_rename(text_input);
+            demo_rename(n);
             return goto_state(ok_state);
         }
+
+    case SAVE_CANCEL:
+        return goto_state(cancel_state);
 
     case GUI_CL:
         gui_keyboard_lock();
         break;
 
     case GUI_BS:
-        text_input_del();
+        if (text_del_char(filename))
+            gui_set_label(file_id, filename);
         break;
 
-    case GUI_CHAR:
-        text_input_char(val);
-        break;
+    default:
+        if (!path_is_sep(i) && text_add_char(i, filename, sizeof (filename)))
+            gui_set_label(file_id, filename);
     }
     return 1;
 }
 
 static int enter_id;
 
-static int save_gui(void)
+static int save_enter(void)
 {
     int id, jd;
 
     if ((id = gui_vstack(0)))
     {
-        gui_label(id, _("Replay Name"), GUI_MED, 0, 0);
+        gui_label(id, _("Replay Name"), GUI_MED, GUI_ALL, 0, 0);
         gui_space(id);
 
-        file_id = gui_label(id, " ", GUI_MED, gui_yel, gui_yel);
+        file_id = gui_label(id, " ", GUI_MED, GUI_ALL, gui_yel, gui_yel);
 
         gui_space(id);
         gui_keyboard(id);
@@ -112,67 +124,36 @@ static int save_gui(void)
         {
             enter_id = gui_start(jd, _("Save"), GUI_SML, SAVE_SAVE, 0);
             gui_space(jd);
-            gui_state(jd, _("Cancel"), GUI_SML, GUI_BACK, 0);
+            gui_state(jd, _("Cancel"), GUI_SML, SAVE_CANCEL, 0);
         }
 
         gui_layout(id, 0, 0);
 
         gui_set_trunc(file_id, TRUNC_HEAD);
-        gui_set_label(file_id, text_input);
+        gui_set_label(file_id, filename);
     }
+
+    SDL_EnableUNICODE(1);
 
     return id;
 }
 
-static void on_text_input(int typing)
+static void save_leave(int id)
 {
-    if (file_id)
-    {
-        gui_set_label(file_id, text_input);
-
-        if (typing)
-            audio_play(AUD_MENU, 1.0f);
-    }
-}
-
-static int save_enter(struct state *st, struct state *prev, int intent)
-{
-    const char *name;
-
-    name = demo_format_name(config_get_s(CONFIG_REPLAY_NAME),
-                            set_id(curr_set()),
-                            level_name(curr_level()));
-
-    text_input_start(on_text_input);
-    text_input_str(name, 0);
-
-    return transition_slide(save_gui(), 1, intent);
-}
-
-static int save_leave(struct state *st, struct state *next, int id, int intent)
-{
-    text_input_stop();
-
-    return transition_slide(id, 0, intent);
+    SDL_EnableUNICODE(0);
+    gui_delete(id);
 }
 
 static int save_keybd(int c, int d)
 {
     if (d)
     {
-        if (c == KEY_EXIT)
-            return save_action(GUI_BACK, 0);
+        gui_focus(enter_id);
 
         if (c == '\b' || c == 0x7F)
-        {
-            gui_focus(enter_id);
-            return save_action(GUI_BS, 0);
-        }
-        else
-        {
-            gui_focus(enter_id);
-            return 1;
-        }
+            return save_action(GUI_BS);
+        if (c >= ' ')
+            return save_action(c);
     }
     return 1;
 }
@@ -183,83 +164,68 @@ static int save_buttn(int b, int d)
     {
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
         {
-            int tok = gui_token(gui_active());
-            int val = gui_value(gui_active());
+            int c = gui_token(gui_click());
 
-            return save_action(tok, (tok == GUI_CHAR ?
-                                     gui_keyboard_char(val) :
-                                     val));
+            if (c >= 0 && !GUI_ISMSK(c))
+                return save_action(gui_keyboard_char(c));
+            else
+                return save_action(c);
         }
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return save_action(GUI_BACK, 0);
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return save_action(SAVE_CANCEL);
     }
     return 1;
 }
 
 /*---------------------------------------------------------------------------*/
 
-static int clobber_action(int tok, int val)
+static int clobber_action(int i)
 {
     audio_play(AUD_MENU, 1.0f);
 
-    if (tok == SAVE_SAVE)
+    if (i == SAVE_SAVE)
     {
-        demo_rename(text_input);
+        demo_rename(filename);
         return goto_state(ok_state);
     }
-    return exit_state(&st_save);
+    return goto_state(&st_save);
 }
 
-static int clobber_gui(void)
+static int clobber_enter(void)
 {
-    int id, jd, kd, ld;
+    int id, jd, kd;
+    int file_id;
 
     if ((id = gui_vstack(0)))
     {
-        kd = gui_label(id, _("Overwrite?"), GUI_MED, gui_red, gui_red);
-        ld = gui_label(id, "MMMMMMMM", GUI_MED, gui_yel, gui_yel);
+        kd = gui_label(id, _("Overwrite?"), GUI_MED, GUI_ALL, gui_red, gui_red);
+
+        file_id = gui_label(id, "MMMMMMMM", GUI_MED, GUI_ALL, gui_yel, gui_yel);
 
         if ((jd = gui_harray(id)))
         {
-            gui_start(jd, _("Cancel"),    GUI_SML, GUI_BACK, 0);
-            gui_state(jd, _("Overwrite"), GUI_SML, SAVE_SAVE, 0);
+            gui_start(jd, _("No"),  GUI_SML, SAVE_CANCEL, 1);
+            gui_state(jd, _("Yes"), GUI_SML, SAVE_SAVE,   0);
         }
 
         gui_pulse(kd, 1.2f);
         gui_layout(id, 0, 0);
 
-        gui_set_trunc(ld, TRUNC_TAIL);
-        gui_set_label(ld, text_input);
+        gui_set_trunc(file_id, TRUNC_TAIL);
+        gui_set_label(file_id, filename);
     }
 
     return id;
-}
-
-static int clobber_enter(struct state *st, struct state *prev, int intent)
-{
-    return transition_slide(clobber_gui(), 1, intent);
-}
-
-static int clobber_keybd(int c, int d)
-{
-    if (d)
-    {
-        if (c == KEY_EXIT)
-            return clobber_action(GUI_BACK, 0);
-    }
-    return 1;
 }
 
 static int clobber_buttn(int b, int d)
 {
     if (d)
     {
-        int active = gui_active();
-
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
-            return clobber_action(gui_token(active), gui_value(active));
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return clobber_action(GUI_BACK, 0);
+            return clobber_action(gui_token(gui_click()));
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return clobber_action(SAVE_CANCEL);
     }
     return 1;
 }
@@ -276,7 +242,8 @@ struct state st_save = {
     shared_angle,
     shared_click,
     save_keybd,
-    save_buttn
+    save_buttn,
+    1, 0
 };
 
 struct state st_clobber = {
@@ -288,6 +255,7 @@ struct state st_clobber = {
     shared_stick,
     shared_angle,
     shared_click,
-    clobber_keybd,
-    clobber_buttn
+    NULL,
+    clobber_buttn,
+    1, 0
 };

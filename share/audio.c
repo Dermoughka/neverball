@@ -14,20 +14,17 @@
 
 #include <SDL.h>
 
-#define OV_EXCLUDE_STATIC_CALLBACKS
 #include <vorbis/codec.h>
 #include <vorbis/vorbisfile.h>
 
 #include <string.h>
 #include <stdlib.h>
-#include <math.h>
 
 #include "config.h"
 #include "audio.h"
 #include "common.h"
 #include "fs.h"
 #include "fs_ov.h"
-#include "log.h"
 
 /*---------------------------------------------------------------------------*/
 
@@ -63,13 +60,11 @@ static ov_callbacks callbacks = {
 
 /*---------------------------------------------------------------------------*/
 
-#define LOG_VOLUME(v) ((float) pow((double) (v), 2.0))
-
 #define MIX(d, s) {                           \
-        int T = (int) (d) + (int) (s);        \
-        if      (T >  32767) (d) =  32767;    \
-        else if (T < -32768) (d) = -32768;    \
-        else                 (d) = (short) T; \
+        int n = (int) (d) + (int) (s);        \
+        if      (n >  32767) (d) =  32767;    \
+        else if (n < -32768) (d) = -32768;    \
+        else                 (d) = (short) n; \
     }
 
 static int voice_step(struct voice *V, float volume, Uint8 *stream, int length)
@@ -103,15 +98,15 @@ static int voice_step(struct voice *V, float volume, Uint8 *stream, int length)
             if (V->chan == 1)
                 for (i = 0; i < n / 2; i += 1)
                 {
-                    short M = (short) (LOG_VOLUME(V->amp) * volume * buffer[i]);
+                    short M = (short) (V->amp * volume * buffer[i]);
 
                     MIX(obuf[c], M); c++;
                     MIX(obuf[c], M); c++;
 
                     V->amp += V->damp;
 
-                    if (V->amp < 0.0f) V->amp = 0.0;
-                    if (V->amp > 1.0f) V->amp = 1.0;
+                    if (V->amp < 0.0) V->amp = 0.0;
+                    if (V->amp > 1.0) V->amp = 1.0;
                 }
 
             /* Mix stereo audio. */
@@ -119,16 +114,16 @@ static int voice_step(struct voice *V, float volume, Uint8 *stream, int length)
             if (V->chan == 2)
                 for (i = 0; i < n / 2; i += 2)
                 {
-                    short L = (short) (LOG_VOLUME(V->amp) * volume * buffer[i + 0]);
-                    short R = (short) (LOG_VOLUME(V->amp) * volume * buffer[i + 1]);
+                    short L = (short) (V->amp * volume * buffer[i + 0]);
+                    short R = (short) (V->amp * volume * buffer[i + 1]);
 
                     MIX(obuf[c], L); c++;
                     MIX(obuf[c], R); c++;
 
                     V->amp += V->damp;
 
-                    if (V->amp < 0.0f) V->amp = 0.0;
-                    if (V->amp > 1.0f) V->amp = 1.0;
+                    if (V->amp < 0.0) V->amp = 0.0;
+                    if (V->amp > 1.0) V->amp = 1.0;
                 }
 
             r -= n;
@@ -163,7 +158,7 @@ static struct voice *voice_init(const char *filename, float a)
 
         /* Attempt to open the named Ogg stream. */
 
-        if ((fp = fs_open_read(filename)))
+        if ((fp = fs_open(filename, "r")))
         {
             if (ov_open_callbacks(fp, &V->vf, NULL, 0, callbacks) == 0)
             {
@@ -177,8 +172,8 @@ static struct voice *voice_init(const char *filename, float a)
                 V->play = 1;
                 V->loop = 0;
 
-                if (V->amp > 1.0f) V->amp = 1.0;
-                if (V->amp < 0.0f) V->amp = 0.0;
+                if (V->amp > 1.0) V->amp = 1.0;
+                if (V->amp < 0.0) V->amp = 0.0;
 
                 /* The file will be closed when the Ogg is cleared. */
             }
@@ -190,13 +185,10 @@ static struct voice *voice_init(const char *filename, float a)
 
 static void voice_free(struct voice *V)
 {
-    if (V)
-    {
-        ov_clear(&V->vf);
+    ov_clear(&V->vf);
 
-        free(V->name);
-        free(V);
-    }
+    free(V->name);
+    free(V);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -259,12 +251,6 @@ static void audio_step(void *data, Uint8 *stream, int length)
 
 void audio_init(void)
 {
-    if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0)
-    {
-        log_printf("Failure to initialize audio (%s)\n", SDL_GetError());
-        return;
-    }
-
     audio_state = 0;
 
     /* Configure the audio. */
@@ -286,7 +272,7 @@ void audio_init(void)
             audio_state = 1;
             SDL_PauseAudio(0);
         }
-        else log_printf("Failure to open audio device (%s)\n", SDL_GetError());
+        else fprintf(stderr, "%s\n", SDL_GetError());
     }
 
     /* Set the initial volumes. */
@@ -297,8 +283,6 @@ void audio_init(void)
 
 void audio_free(void)
 {
-    struct voice *V;
-
     /* Halt the audio thread. */
 
     SDL_CloseAudio();
@@ -306,27 +290,8 @@ void audio_free(void)
     /* Release the input buffer. */
 
     free(buffer);
-    buffer = NULL;
 
-    /* Free the voices. */
-
-    voice_free(music);
-    voice_free(queue);
-
-    V = voices;
-
-    while (V)
-    {
-        struct voice *N = V->next;
-        voice_free(V);
-        V = N;
-    }
-
-    voices = NULL;
-    music = NULL;
-    queue = NULL;
-
-    SDL_QuitSubSystem(SDL_INIT_AUDIO);
+    /* Ogg streams and voice structure remain open to allow quality setting. */
 }
 
 void audio_play(const char *filename, float a)
@@ -346,8 +311,8 @@ void audio_play(const char *filename, float a)
 
                     V->amp = a;
 
-                    if (V->amp > 1.0f) V->amp = 1.0;
-                    if (V->amp < 0.0f) V->amp = 0.0;
+                    if (V->amp > 1.0) V->amp = 1.0;
+                    if (V->amp < 0.0) V->amp = 0.0;
 
                     SDL_UnlockAudio();
                     return;
@@ -372,7 +337,7 @@ void audio_play(const char *filename, float a)
 
 /*---------------------------------------------------------------------------*/
 
-static void audio_music_play(const char *filename)
+void audio_music_play(const char *filename)
 {
     if (audio_state)
     {
@@ -389,7 +354,7 @@ static void audio_music_play(const char *filename)
     }
 }
 
-static void audio_music_queue(const char *filename, float t)
+void audio_music_queue(const char *filename, float t)
 {
     if (audio_state)
     {
@@ -476,16 +441,10 @@ void audio_music_fade_to(float t, const char *filename)
     }
 }
 
-/*
- * Logarithmic volume control.
- */
 void audio_volume(int s, int m)
 {
-    float sl = (float) s / 10.0f;
-    float ml = (float) m / 10.0f;
-
-    sound_vol = LOG_VOLUME(sl);
-    music_vol = LOG_VOLUME(ml);
+    sound_vol = (float) s / 10.0f;
+    music_vol = (float) m / 10.0f;
 }
 
 /*---------------------------------------------------------------------------*/

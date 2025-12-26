@@ -2,7 +2,6 @@
 #define DIR_H
 
 #include "array.h"
-#include "list.h"
 
 struct dir_item
 {
@@ -18,22 +17,9 @@ struct dir_item
 #define DIR_ITEM_GET(a, i) ((struct dir_item *) array_get((a), (i)))
 
 Array dir_scan(const char *,
-               int  (*filter)    (struct dir_item *),
-               List (*list_files)(const char *),
-               void (*free_files)(List));
+               int    (*filter)   (struct dir_item *),
+               char **(*get_list) (const char *),
+               void   (*free_list)(void *));
 void  dir_free(Array);
-
-List dir_list_files(const char *);
-void dir_list_free (List);
-
-int dir_exists(const char *);
-
-#ifdef _WIN32
-#include <direct.h>
-#define dir_make(path) _mkdir(path)
-#else
-#include <sys/stat.h>
-#define dir_make(path) mkdir(path, 0777)
-#endif
 
 #endif

@@ -12,23 +12,17 @@
  * General Public License for more details.
  */
 
-#ifdef __EMSCRIPTEN__
-#include <emscripten.h>
-#endif
-
 #include <string.h>
 #include <assert.h>
 
 #include "gui.h"
-#include "transition.h"
 #include "vec3.h"
 #include "demo.h"
 #include "audio.h"
 #include "config.h"
+#include "st_shared.h"
 #include "cmd.h"
 #include "demo_dir.h"
-#include "version.h"
-#include "key.h"
 
 #include "game_common.h"
 #include "game_server.h"
@@ -41,22 +35,19 @@
 #include "st_conf.h"
 #include "st_set.h"
 #include "st_name.h"
-#include "st_shared.h"
-#include "st_package.h"
 
 /*---------------------------------------------------------------------------*/
 
-int load_title_background(void)
+static int init_title_level(void)
 {
-    if (game_client_init("gui/title.sol"))
+    if (game_client_init("map-medium/title.sol"))
     {
         union cmd cmd;
 
         cmd.type = CMD_GOAL_OPEN;
         game_proxy_enq(&cmd);
-        game_client_sync(NULL);
 
-        game_client_fly(1.0f);
+        game_client_step(NULL);
 
         return 1;
     }
@@ -71,64 +62,50 @@ static const char *pick_demo(Array items)
 
 /*---------------------------------------------------------------------------*/
 
-enum
-{
-    MODE_NONE,
-    MODE_LEVEL,
-    MODE_LEVEL_FADE,
-    MODE_DEMO,
-    MODE_DEMO_FADE
-};
-
 static float real_time = 0.0f;
-static int   mode      = MODE_NONE;
+static int   mode      = 0;
 
 static Array items;
 
 static int play_id = 0;
 
-enum
-{
-    TITLE_PLAY = GUI_LAST,
-    TITLE_HELP,
-    TITLE_DEMO,
-    TITLE_CONF,
-    TITLE_PACKAGES
-};
+#define TITLE_PLAY 1
+#define TITLE_HELP 2
+#define TITLE_DEMO 3
+#define TITLE_CONF 4
+#define TITLE_EXIT 5
 
-static int title_action(int tok, int val)
+static int title_action(int i)
 {
-    static const char keyphrase[] = "xyzzy";
+    static const char keyphrase[] = "CHEAT";
     static char queue[sizeof (keyphrase)] = "";
 
     size_t queue_len = strlen(queue);
 
     audio_play(AUD_MENU, 1.0f);
 
-    switch (tok)
+    switch (i)
     {
-    case GUI_BACK:
-        return 0;
-        break;
-
     case TITLE_PLAY:
         if (strlen(config_get_s(CONFIG_PLAYER)) == 0)
             return goto_name(&st_set, &st_title, 0);
         else
             return goto_state(&st_set);
+
         break;
 
     case TITLE_HELP: return goto_state(&st_help); break;
     case TITLE_DEMO: return goto_state(&st_demo); break;
     case TITLE_CONF: return goto_state(&st_conf); break;
-    case TITLE_PACKAGES: return goto_state(&st_package); break;
-    case GUI_CHAR:
+    case TITLE_EXIT: return 0;                    break;
+
+    default:
 
         /* Let the queue fill up. */
 
         if (queue_len < sizeof (queue) - 1)
         {
-            queue[queue_len]     = (char) val;
+            queue[queue_len]     = (char) i;
             queue[queue_len + 1] = '\0';
         }
 
@@ -141,19 +118,19 @@ static int title_action(int tok, int val)
             for (k = 1; k < queue_len; k++)
                 queue[k - 1] = queue[k];
 
-            queue[queue_len - 1] = (char) val;
+            queue[queue_len - 1] = (char) i;
         }
 
         if (strcmp(queue, keyphrase) == 0)
         {
             config_set_cheat();
-            gui_set_label(play_id, gt_prefix("menu^Cheat"));
+            gui_set_label(play_id, sgettext("menu^Cheat"));
             gui_pulse(play_id, 1.2f);
         }
         else if (config_cheat())
         {
             config_clr_cheat();
-            gui_set_label(play_id, gt_prefix("menu^Play"));
+            gui_set_label(play_id, sgettext("menu^Play"));
             gui_pulse(play_id, 1.2f);
         }
 
@@ -162,93 +139,41 @@ static int title_action(int tok, int val)
     return 1;
 }
 
-static int title_gui(void)
+static int title_enter(void)
 {
-    int root_id, id, jd, kd;
+    int id, jd, kd;
 
     /* Build the title GUI. */
 
-    if ((root_id = gui_root()))
+    if ((id = gui_vstack(0)))
     {
-        if ((id = gui_vstack(root_id)))
+        gui_label(id, "Neverball", GUI_LRG, GUI_ALL, 0, 0);
+
+        gui_space(id);
+
+        if ((jd = gui_harray(id)))
         {
-            if ((jd = gui_label(id, "  Neverball  ", GUI_LRG, 0, 0)))
+            gui_filler(jd);
+
+            if ((kd = gui_varray(jd)))
             {
-                gui_set_fill(jd);
-                gui_set_slide(jd, GUI_N | GUI_FLING | GUI_EASE_ELASTIC, 0, 1.6f, 0);
+                if (config_cheat())
+                    play_id = gui_start(kd, sgettext("menu^Cheat"),
+                                        GUI_MED, TITLE_PLAY, 1);
+                else
+                    play_id = gui_start(kd, sgettext("menu^Play"),
+                                        GUI_MED, TITLE_PLAY, 1);
+
+                gui_state(kd, sgettext("menu^Replay"),  GUI_MED, TITLE_DEMO, 0);
+                gui_state(kd, sgettext("menu^Help"),    GUI_MED, TITLE_HELP, 0);
+                gui_state(kd, sgettext("menu^Options"), GUI_MED, TITLE_CONF, 0);
+                gui_state(kd, sgettext("menu^Exit"),    GUI_MED, TITLE_EXIT, 0);
             }
 
-            gui_space(id);
-
-            if ((jd = gui_hstack(id)))
-            {
-                gui_filler(jd);
-
-                if ((kd = gui_varray(jd)))
-                {
-                    if (config_cheat())
-                        play_id = gui_start(kd, gt_prefix("menu^Cheat"),
-                                            GUI_MED, TITLE_PLAY, 0);
-                    else
-                        play_id = gui_start(kd, gt_prefix("menu^Play"),
-                                            GUI_MED, TITLE_PLAY, 0);
-
-                    gui_state(kd, gt_prefix("menu^Replay"),  GUI_MED, TITLE_DEMO, 0);
-                    gui_state(kd, gt_prefix("menu^Help"),    GUI_MED, TITLE_HELP, 0);
-                    gui_state(kd, gt_prefix("menu^Options"), GUI_MED, TITLE_CONF, 0);
-                    gui_state(kd, gt_prefix("menu^Exit"),    GUI_MED, GUI_BACK, 0);
-
-                    /* Hilight the start button. */
-
-                    gui_set_hilite(play_id, 1);
-                    gui_set_slide(kd, GUI_N | GUI_EASE_ELASTIC, 0.8f, 1.0f, 0.05f);
-                }
-
-                gui_filler(jd);
-            }
-            gui_layout(id, 0, 0);
+            gui_filler(jd);
         }
-
-#if ENABLE_VERSION
-        if ((id = gui_label(root_id, "Neverball " VERSION, GUI_TNY, gui_wht2, gui_wht2)))
-        {
-            gui_clr_rect(id);
-            gui_set_slide(id, GUI_S, 0.85f, 0.4f, 0);
-            gui_layout(id, 0, -1);
-        }
-#endif
-
-#if ENABLE_FETCH
-        if (config_get_d(CONFIG_ONLINE))
-        {
-            if ((id = gui_vstack(root_id)))
-            {
-                if ((jd = gui_hstack(id)))
-                {
-                    gui_space(jd);
-                    gui_state(jd, _("Addons"), GUI_SML, TITLE_PACKAGES, 0);
-                }
-                gui_space(id);
-
-                gui_set_slide(id, GUI_N | GUI_EASE_ELASTIC, 1.2f, 1.4f, 0);
-
-                gui_layout(id, +1, -1);
-            }
-        }
-#endif
+        gui_layout(id, 0, 0);
     }
-
-    return root_id;
-}
-
-static int filter_cmd(const union cmd *cmd)
-{
-    return (cmd ? cmd->type != CMD_SOUND : 1);
-}
-
-static int title_enter(struct state *st, struct state *prev, int intent)
-{
-    game_proxy_filter(filter_cmd);
 
     /* Start the title screen music. */
 
@@ -256,20 +181,17 @@ static int title_enter(struct state *st, struct state *prev, int intent)
 
     /* Initialize the title level for display. */
 
-    if (load_title_background())
-        mode = MODE_LEVEL;
-    else
-        mode = MODE_NONE;
+    init_title_level();
 
     real_time = 0.0f;
+    mode = 0;
 
-    if (intent == INTENT_BACK)
-        return transition_slide(title_gui(), 1, intent);
+    SDL_EnableUNICODE(1);
 
-    return title_gui();
+    return id;
 }
 
-static int title_leave(struct state *st, struct state *next, int id, int intent)
+static void title_leave(int id)
 {
     if (items)
     {
@@ -277,16 +199,9 @@ static int title_leave(struct state *st, struct state *next, int id, int intent)
         items = NULL;
     }
 
+    SDL_EnableUNICODE(0);
     demo_replay_stop(0);
-    game_proxy_filter(NULL);
-
-    return transition_slide(id, 0, intent);
-}
-
-static void title_paint(int id, float t)
-{
-    game_client_draw(0, t);
-    gui_paint(id);
+    gui_delete(id);
 }
 
 static void title_timer(int id, float dt)
@@ -297,21 +212,23 @@ static void title_timer(int id, float dt)
 
     switch (mode)
     {
-    case MODE_LEVEL: /* Pan across title level. */
+    case 0: /* Mode 0: Pan across title level. */
 
         if (real_time <= 20.0f)
         {
-            game_client_fly(fcosf(V_PI * real_time / 20.0f));
+            game_set_fly(fcosf(V_PI * real_time / 20.0f),
+                         game_client_file());
+            game_client_step(NULL);
         }
         else
         {
             game_fade(+1.0f);
             real_time = 0.0f;
-            mode = MODE_LEVEL_FADE;
+            mode = 1;
         }
         break;
 
-    case MODE_LEVEL_FADE: /* Fade out.  Load demo level. */
+    case 1: /* Mode 1: Fade out.  Load demo level. */
 
         if (real_time > 1.0f)
         {
@@ -321,41 +238,39 @@ static void title_timer(int id, float dt)
             if ((demo = pick_demo(items)))
             {
                 demo_replay_init(demo, NULL, NULL, NULL, NULL, NULL);
-                game_client_fly(0.0f);
+                game_set_fly(0.0f, game_client_file());
+                game_client_step(NULL);
                 real_time = 0.0f;
-                mode = MODE_DEMO;
+                mode = 2;
             }
             else
             {
                 game_fade(-1.0f);
                 real_time = 0.0f;
-                mode = MODE_LEVEL;
+                mode = 0;
             }
         }
         break;
 
-    case MODE_DEMO: /* Run demo. */
+    case 2: /* Mode 2: Run demo. */
 
         if (!demo_replay_step(dt))
         {
             demo_replay_stop(0);
             game_fade(+1.0f);
             real_time = 0.0f;
-            mode = MODE_DEMO_FADE;
+            mode = 3;
         }
-        else
-            game_client_blend(demo_replay_blend());
-
         break;
 
-    case MODE_DEMO_FADE: /* Fade out.  Load title level. */
+    case 3: /* Mode 3: Fade out.  Load title level. */
 
         if (real_time > 1.0f)
         {
-            load_title_background();
+            init_title_level();
 
             real_time = 0.0f;
-            mode = MODE_LEVEL;
+            mode = 0;
         }
         break;
     }
@@ -364,31 +279,10 @@ static void title_timer(int id, float dt)
     game_step_fade(dt);
 }
 
-static void title_point(int id, int x, int y, int dx, int dy)
-{
-    int jd;
-
-    if ((jd = gui_point(id, x, y)))
-        gui_pulse(jd, 1.2f);
-}
-
-void title_stick(int id, int a, float v, int bump)
-{
-    int jd;
-
-    if ((jd = gui_stick(id, a, v, bump)))
-        gui_pulse(jd, 1.2f);
-}
-
 static int title_keybd(int c, int d)
 {
-    if (d)
-    {
-        if (c == KEY_EXIT)
-            return title_action(GUI_BACK, 0);
-        if (c >= SDLK_a && c <= SDLK_z)
-            return title_action(GUI_CHAR, c);
-    }
+    if (d && (c & 0xFF80) == 0 && c > ' ')
+        return title_action(c);
     return 1;
 }
 
@@ -396,12 +290,10 @@ static int title_buttn(int b, int d)
 {
     if (d)
     {
-        int active = gui_active();
-
         if (config_tst_d(CONFIG_JOYSTICK_BUTTON_A, b))
-            return title_action(gui_token(active), gui_value(active));
-        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_B, b))
-            return title_action(GUI_BACK, 0);
+            return title_action(gui_token(gui_click()));
+        if (config_tst_d(CONFIG_JOYSTICK_BUTTON_EXIT, b))
+            return 0;
     }
     return 1;
 }
@@ -411,13 +303,14 @@ static int title_buttn(int b, int d)
 struct state st_title = {
     title_enter,
     title_leave,
-    title_paint,
+    shared_paint,
     title_timer,
-    title_point,
-    title_stick,
+    shared_point,
+    shared_stick,
     shared_angle,
     shared_click,
     title_keybd,
-    title_buttn
+    title_buttn,
+    1, 0
 };
 

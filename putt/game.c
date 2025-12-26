@@ -20,24 +20,20 @@
 #include "vec3.h"
 #include "geom.h"
 #include "ball.h"
+#include "back.h"
 #include "hole.h"
 #include "hud.h"
-#include "hmd.h"
 #include "image.h"
 #include "audio.h"
+#include "solid_gl.h"
+#include "solid_phys.h"
 #include "config.h"
 #include "video.h"
 
-#include "solid_draw.h"
-#include "solid_sim.h"
-#include "solid_all.h"
-
 /*---------------------------------------------------------------------------*/
 
-static struct s_full file;
+static struct s_file file;
 static int           ball;
-
-static int state;
 
 static float view_a;                    /* Ideal view rotation about Y axis  */
 static float view_m;
@@ -54,8 +50,6 @@ static float jump_e = 1;                /* Jumping enabled flag              */
 static float jump_b = 0;                /* Jump-in-progress flag             */
 static float jump_dt;                   /* Jump duration                     */
 static float jump_p[3];                 /* Jump destination                  */
-
-static float idle_t;                    /* Idling timeout                    */
 
 /*---------------------------------------------------------------------------*/
 
@@ -86,67 +80,85 @@ static void view_init(void)
     view_e[2][2] = 1.f;
 }
 
-int game_init(const char *s)
+void game_init(const char *s)
 {
-    int i;
-
     jump_e = 1;
     jump_b = 0;
 
-    idle_t = 1.0f;
-
     view_init();
-
-    if (!(state = sol_load_full(&file, s, config_get_d(CONFIG_SHADOW))))
-        return 0;
-
-    sol_init_sim(&file.vary);
-
-    for (i = 0; i < file.base.dc; i++)
-    {
-        const char *k = file.base.av + file.base.dv[i].ai;
-        const char *v = file.base.av + file.base.dv[i].aj;
-
-        if (strcmp(k, "idle") == 0)
-        {
-            sscanf(v, "%f", &idle_t);
-
-            if (idle_t < 1.0f)
-                idle_t = 1.0f;
-        }
-    }
-    return 1;
+    sol_load_gl(&file, s,
+                config_get_d(CONFIG_TEXTURES),
+                config_get_d(CONFIG_SHADOW));
 }
 
 void game_free(void)
 {
-    sol_quit_sim();
-    sol_free_full(&file);
+    sol_free_gl(&file);
 }
 
 /*---------------------------------------------------------------------------*/
 
-static void game_draw_vect(struct s_rend *rend, const struct s_vary *fp)
+static void game_draw_vect_prim(const struct s_file *fp, GLenum mode)
+{
+    float p[3];
+    float x[3];
+    float z[3];
+    float r;
+
+    v_cpy(p, fp->uv[ball].p);
+    v_cpy(x, view_e[0]);
+    v_cpy(z, view_e[2]);
+
+    r = fp->uv[ball].r;
+
+    glBegin(mode);
+    {
+        glColor4f(1.0f, 1.0f, 0.5f, 0.5f);
+        glVertex3f(p[0] - x[0] * r,
+                   p[1] - x[1] * r,
+                   p[2] - x[2] * r);
+
+        glColor4f(1.0f, 0.0f, 0.0f, 0.5f);
+        glVertex3f(p[0] + z[0] * view_m,
+                   p[1] + z[1] * view_m,
+                   p[2] + z[2] * view_m);
+
+        glColor4f(1.0f, 1.0f, 0.0f, 0.5f);
+        glVertex3f(p[0] + x[0] * r,
+                   p[1] + x[1] * r,
+                   p[2] + x[2] * r);
+    }
+    glEnd();
+}
+
+static void game_draw_vect(const struct s_file *fp)
 {
     if (view_m > 0.f)
     {
-        glPushMatrix();
+        glPushAttrib(GL_TEXTURE_BIT);
+        glPushAttrib(GL_POLYGON_BIT);
+        glPushAttrib(GL_LIGHTING_BIT);
+        glPushAttrib(GL_DEPTH_BUFFER_BIT);
         {
-            glTranslatef(fp->uv[ball].p[0],
-                         fp->uv[ball].p[1],
-                         fp->uv[ball].p[2]);
-            glRotatef(view_a, 0.0f, 1.0f, 0.0f);
-            glScalef(fp->uv[ball].r,
-                     fp->uv[ball].r * 0.1f, view_m);
+            glEnable(GL_COLOR_MATERIAL);
+            glDisable(GL_LIGHTING);
+            glDisable(GL_TEXTURE_2D);
+            glDepthMask(GL_FALSE);
 
-            vect_draw(rend);
+            glEnable(GL_DEPTH_TEST);
+            game_draw_vect_prim(fp, GL_TRIANGLES);
+
+            glDisable(GL_DEPTH_TEST);
+            game_draw_vect_prim(fp, GL_LINE_STRIP);
         }
-        glPopMatrix();
+        glPopAttrib();
+        glPopAttrib();
+        glPopAttrib();
+        glPopAttrib();
     }
 }
 
-static void game_draw_balls(struct s_rend *rend,
-                            const struct s_vary *fp,
+static void game_draw_balls(const struct s_file *fp,
                             const float *bill_M, float t)
 {
     static const GLfloat color[5][4] = {
@@ -158,8 +170,6 @@ static void game_draw_balls(struct s_rend *rend,
     };
 
     int ui;
-
-    r_color_mtrl(rend, 1);
 
     for (ui = curr_party(); ui > 0; ui--)
     {
@@ -180,11 +190,10 @@ static void game_draw_balls(struct s_rend *rend,
                          fp->uv[ui].r,
                          fp->uv[ui].r);
 
-                glColor4f(color[ui][0],
-                          color[ui][1],
-                          color[ui][2],
-                          color[ui][3]);
-                ball_draw(rend, ball_M, pend_M, bill_M, t);
+                glEnable(GL_COLOR_MATERIAL);
+                glColor4fv(color[ui]);
+                ball_draw(ball_M, pend_M, bill_M, t);
+                glDisable(GL_COLOR_MATERIAL);
             }
             glPopMatrix();
         }
@@ -203,117 +212,113 @@ static void game_draw_balls(struct s_rend *rend,
                           color[ui][1],
                           color[ui][2], 0.5f);
 
-                mark_draw(rend);
+                mark_draw();
             }
             glPopMatrix();
         }
     }
-
     glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
-    r_color_mtrl(rend, 0);
 }
 
-static void game_draw_flags(struct s_rend *rend, const struct s_base *fp)
+static void game_draw_goals(const struct s_file *fp)
 {
     int zi;
 
     for (zi = 0; zi < fp->zc; zi++)
-        flag_draw(rend, fp->zv[zi].p);
+    {
+        glPushMatrix();
+        {
+            glTranslatef(fp->zv[zi].p[0],
+                         fp->zv[zi].p[1],
+                         fp->zv[zi].p[2]);
+            flag_draw();
+        }
+        glPopMatrix();
+    }
 }
 
-static void game_draw_beams(struct s_rend *rend, const struct s_base *bp,
-                                                 const struct s_vary *vp)
+static void game_draw_jumps(const struct s_file *fp)
 {
-    static const GLfloat jump_c[2][4]    =  {{ 0.7f, 0.5f, 1.0f, 0.5f },
-                                             { 0.7f, 0.5f, 1.0f, 0.8f }};
-    static const GLfloat swch_c[2][2][4] = {{{ 1.0f, 0.0f, 0.0f, 0.5f },
-                                             { 1.0f, 0.0f, 0.0f, 0.8f }},
-                                            {{ 0.0f, 1.0f, 0.0f, 0.5f },
-                                             { 0.0f, 1.0f, 0.0f, 0.8f }}};
+    int ji;
 
-    int i;
-
-    /* Jump beams */
-
-    for (i = 0; i < bp->jc; i++)
-        beam_draw(rend, bp->jv[i].p, jump_c[jump_e ? 0 : 1],
-                        bp->jv[i].r, 2.0f);
-
-    /* Switch beams */
-
-    for (i = 0; i < vp->xc; i++)
+    for (ji = 0; ji < fp->jc; ji++)
     {
-        struct v_swch *xp = vp->xv + i;
+        glPushMatrix();
+        {
+            glTranslatef(fp->jv[ji].p[0],
+                         fp->jv[ji].p[1],
+                         fp->jv[ji].p[2]);
 
-        if (!xp->base->i)
-            beam_draw(rend, xp->base->p, swch_c[xp->f][xp->e],
-                            xp->base->r, 2.0f);
+            glScalef(fp->jv[ji].r, 1.f, fp->jv[ji].r);
+            jump_draw(!jump_e);
+        }
+        glPopMatrix();
+    }
+}
+
+static void game_draw_swchs(const struct s_file *fp)
+{
+    int xi;
+
+    for (xi = 0; xi < fp->xc; xi++)
+    {
+        if (fp->xv[xi].i)
+            continue;
+
+        glPushMatrix();
+        {
+            glTranslatef(fp->xv[xi].p[0],
+                         fp->xv[xi].p[1],
+                         fp->xv[xi].p[2]);
+
+            glScalef(fp->xv[xi].r, 1.f, fp->xv[xi].r);
+            swch_draw(fp->xv[xi].f, fp->xv[xi].e);
+        }
+        glPopMatrix();
     }
 }
 
 /*---------------------------------------------------------------------------*/
 
-static void game_shadow_conf(int enable)
-{
-    if (enable && config_get_d(CONFIG_SHADOW))
-    {
-        tex_env_select(&tex_env_shadow_clip,
-                       &tex_env_shadow,
-                       &tex_env_default,
-                       NULL);
-    }
-    else
-    {
-        tex_env_active(&tex_env_default);
-    }
-}
-
 void game_draw(int pose, float t)
 {
-    const float light_p[4] = { 8.f, 32.f, 8.f, 0.f };
+    static const float a[4] = { 0.2f, 0.2f, 0.2f, 1.0f };
+    static const float s[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    static const float e[4] = { 0.0f, 0.0f, 0.0f, 0.0f };
+    static const float h[1] = { 0.0f };
 
-    struct s_draw *fp = &file.draw;
-    struct s_rend rend;
+    const float light_p[4] = { 8.f, 32.f, 8.f, 1.f };
+
+    const struct s_file *fp = &file;
 
     float fov = FOV;
-
-    if (!state)
-        return;
-
-    fp->shadow_ui = ball;
-
-    game_shadow_conf(1);
-    r_draw_enable(&rend);
 
     if (jump_b) fov *= 2.0f * fabsf(jump_dt - 0.5f);
 
     video_push_persp(fov, 0.1f, FAR_DIST);
+    glPushAttrib(GL_LIGHTING_BIT);
     glPushMatrix();
     {
-        float T[16], M[16], v[3], c[3];
+        float T[16], M[16], v[3], rx, ry;
 
-        /* In VR, move the view center up to keep the viewer level. */
-
-        v_cpy(c, view_c);
-
-        if (hmd_stat())
-            c[1] += view_dy;
-
-        video_calc_view(T, c, view_p, view_e[1]);
+        m_view(T, view_c, view_p, view_e[1]);
         m_xps(M, T);
 
-        v_sub(v, c, view_p);
+        v_sub(v, view_c, view_p);
+
+        rx = V_DEG(fatan2f(-v[1], fsqrtf(v[0] * v[0] + v[2] * v[2])));
+        ry = V_DEG(fatan2f(+v[0], -v[2]));
 
         glTranslatef(0.f, 0.f, -v_len(v));
         glMultMatrixf(M);
-        glTranslatef(-c[0], -c[1], -c[2]);
+        glTranslatef(-view_c[0], -view_c[1], -view_c[2]);
 
         /* Center the skybox about the position of the camera. */
 
         glPushMatrix();
         {
             glTranslatef(view_p[0], view_p[1], view_p[2]);
-            back_draw(&rend);
+            back_draw(0);
         }
         glPopMatrix();
 
@@ -322,7 +327,14 @@ void game_draw(int pose, float t)
 
         /* Draw the floor. */
 
-        sol_draw(fp, &rend, 0, 1);
+        sol_draw(fp, 0, 1);
+
+        if (config_get_d(CONFIG_SHADOW) && !pose)
+        {
+            shad_draw_set(fp->uv[ball].p, fp->uv[ball].r);
+            sol_shad(fp);
+            shad_draw_clr();
+        }
 
         /* Draw the game elements. */
 
@@ -331,24 +343,33 @@ void game_draw(int pose, float t)
 
         if (pose == 0)
         {
-            game_draw_balls(&rend, fp->vary, T, t);
-            game_draw_vect(&rend, fp->vary);
+            game_draw_balls(fp, T, t);
+            game_draw_vect(fp);
         }
 
+        glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT,   a);
+        glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR,  s);
+        glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION,  e);
+        glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, h);
+
+        game_draw_goals(fp);
+
+        glEnable(GL_COLOR_MATERIAL);
+        glDisable(GL_LIGHTING);
+        glDisable(GL_TEXTURE_2D);
         glDepthMask(GL_FALSE);
         {
-            game_draw_flags(&rend, fp->base);
-            game_draw_beams(&rend, fp->base, fp->vary);
+            game_draw_jumps(fp);
+            game_draw_swchs(fp);
         }
         glDepthMask(GL_TRUE);
-
-        glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+        glEnable(GL_TEXTURE_2D);
+        glEnable(GL_LIGHTING);
+        glDisable(GL_COLOR_MATERIAL);
     }
     glPopMatrix();
+    glPopAttrib();
     video_pop_matrix();
-
-    r_draw_disable(&rend);
-    game_shadow_conf(0);
 }
 
 /*---------------------------------------------------------------------------*/
@@ -364,13 +385,10 @@ void game_update_view(float dt)
     float d[3];
     float s = 2.f * dt;
 
-    if (!state)
-        return;
-
     /* Center the view about the ball. */
 
-    v_cpy(view_c, file.vary.uv[ball].p);
-    v_inv(view_v, file.vary.uv[ball].v);
+    v_cpy(view_c, file.uv[ball].p);
+    v_inv(view_v, file.uv[ball].v);
 
     switch (config_get_d(CONFIG_CAMERA))
     {
@@ -427,7 +445,7 @@ static int game_update_state(float dt)
 {
     static float t = 0.f;
 
-    struct s_vary *fp = &file.vary;
+    struct s_file *fp = &file;
     float p[3];
 
     if (dt > 0.f)
@@ -437,13 +455,12 @@ static int game_update_state(float dt)
 
     /* Test for a switch. */
 
-    if (sol_swch_test(fp, NULL, ball) == SWCH_INSIDE)
+    if (sol_swch_test(fp, ball))
         audio_play(AUD_SWITCH, 1.f);
 
     /* Test for a jump. */
 
-    if (jump_e == 1 && jump_b == 0 && (sol_jump_test(fp, jump_p, ball) ==
-                                       JUMP_INSIDE))
+    if (jump_e == 1 && jump_b == 0 && sol_jump_test(fp, jump_p, ball) == 1)
     {
         jump_b  = 1;
         jump_e  = 0;
@@ -451,29 +468,24 @@ static int game_update_state(float dt)
 
         audio_play(AUD_JUMP, 1.f);
     }
-    if (jump_e == 0 && jump_b == 0 && (sol_jump_test(fp, jump_p, ball) ==
-                                       JUMP_OUTSIDE))
-    {
+    if (jump_e == 0 && jump_b == 0 &&  sol_jump_test(fp, jump_p, ball) == 0)
         jump_e = 1;
-    }
 
     /* Test for fall-out. */
 
-    if (file.base.vc == 0 || fp->uv[ball].p[1] < file.base.vv[0].p[1])
+    if (fp->uv[ball].p[1] < -10.f)
         return GAME_FALL;
 
     /* Test for a goal or stop. */
 
-    if (t > 1.f && sol_goal_test(fp, p, ball))
+    if (t > 1.f)
     {
         t = 0.f;
-        return GAME_GOAL;
-    }
 
-    if (t > idle_t)
-    {
-        t = 0.f;
-        return GAME_STOP;
+        if (sol_goal_test(fp, p, ball))
+            return GAME_GOAL;
+        else
+            return GAME_STOP;
     }
 
     return GAME_NONE;
@@ -496,7 +508,7 @@ static int game_update_state(float dt)
 
 int game_step(const float g[3], float dt)
 {
-    struct s_vary *fp = &file.vary;
+    struct s_file *fp = &file;
 
     static float s = 0.f;
     static float t = 0.f;
@@ -505,9 +517,6 @@ int game_step(const float g[3], float dt)
     float b = 0.f;
     float st = 0.f;
     int i, n = 1, m = 0;
-
-    if (!state)
-        return GAME_NONE;
 
     s = (7.f * s + dt) / 8.f;
     t = s;
@@ -518,7 +527,7 @@ int game_step(const float g[3], float dt)
 
         /* Handle a jump. */
 
-        if (0.5f < jump_dt)
+        if (0.5 < jump_dt)
         {
             fp->uv[ball].p[0] = jump_p[0];
             fp->uv[ball].p[1] = jump_p[1];
@@ -539,7 +548,7 @@ int game_step(const float g[3], float dt)
 
         for (i = 0; i < n; i++)
         {
-            d = sol_step(fp, NULL, g, t, ball, &m);
+            d = sol_step(fp, g, t, ball, &m);
 
             if (b < d)
                 b = d;
@@ -549,8 +558,8 @@ int game_step(const float g[3], float dt)
 
         /* Mix the sound of a ball bounce. */
 
-        if (b > 0.5f)
-            audio_play(AUD_BUMP, (b - 0.5f) * 2.0f);
+        if (b > 0.5)
+            audio_play(AUD_BUMP, (float) (b - 0.5) * 2.0f);
     }
 
     game_update_view(dt);
@@ -565,9 +574,9 @@ void game_putt(void)
      * friction too early and stopping the ball prematurely.
      */
 
-    file.vary.uv[ball].v[0] = -4.f * view_e[2][0] * view_m;
-    file.vary.uv[ball].v[1] = -4.f * view_e[2][1] * view_m + BALL_FUDGE;
-    file.vary.uv[ball].v[2] = -4.f * view_e[2][2] * view_m;
+    file.uv[ball].v[0] = -4.f * view_e[2][0] * view_m;
+    file.uv[ball].v[1] = -4.f * view_e[2][1] * view_m + BALL_FUDGE;
+    file.uv[ball].v[2] = -4.f * view_e[2][2] * view_m;
 
     view_m = 0.f;
 }
@@ -588,13 +597,13 @@ void game_set_mag(int d)
 {
     view_m -= (float) (1.f * d) / config_get_d(CONFIG_MOUSE_SENSE);
 
-    if (view_m < 0.25f)
-        view_m = 0.25f;
+    if (view_m < 0.25)
+        view_m = 0.25;
 }
 
 void game_set_fly(float k)
 {
-    struct s_vary *fp = &file.vary;
+    struct s_file *fp = &file;
 
     float  x[3] = { 1.f, 0.f, 0.f };
     float  y[3] = { 0.f, 1.f, 0.f };
@@ -605,16 +614,9 @@ void game_set_fly(float k)
     float p1[3] = { 0.f, 0.f, 0.f };
     float  v[3];
 
-    if (!state)
-        return;
-
     v_cpy(view_e[0], x);
     v_cpy(view_e[1], y);
-
-    if (fp->base->zc > 0)
-        v_sub(view_e[2], fp->uv[ball].p, fp->base->zv[0].p);
-    else
-        v_cpy(view_e[2], z);
+    v_sub(view_e[2], fp->uv[ball].p, fp->zv[0].p);
 
     if (fabs(v_dot(view_e[1], view_e[2])) > 0.999)
         v_cpy(view_e[2], z);
@@ -638,18 +640,18 @@ void game_set_fly(float k)
 
     /* k = +1.0 view is s_view 0 */
 
-    if (k >= 0 && fp->base->wc > 0)
+    if (k >= 0 && fp->wc > 0)
     {
-        v_cpy(p1, fp->base->wv[0].p);
-        v_cpy(c1, fp->base->wv[0].q);
+        v_cpy(p1, fp->wv[0].p);
+        v_cpy(c1, fp->wv[0].q);
     }
 
     /* k = -1.0 view is s_view 1 */
 
-    if (k <= 0 && fp->base->wc > 1)
+    if (k <= 0 && fp->wc > 1)
     {
-        v_cpy(p1, fp->base->wv[1].p);
-        v_cpy(c1, fp->base->wv[1].q);
+        v_cpy(p1, fp->wv[1].p);
+        v_cpy(c1, fp->wv[1].q);
     }
 
     /* Interpolate the views. */
@@ -680,32 +682,32 @@ void game_ball(int i)
     jump_e = 1;
     jump_b = 0;
 
-    for (ui = 0; ui < file.vary.uc; ui++)
+    for (ui = 0; ui < file.uc; ui++)
     {
-        file.vary.uv[ui].v[0] = 0.f;
-        file.vary.uv[ui].v[1] = 0.f;
-        file.vary.uv[ui].v[2] = 0.f;
+        file.uv[ui].v[0] = 0.f;
+        file.uv[ui].v[1] = 0.f;
+        file.uv[ui].v[2] = 0.f;
 
-        file.vary.uv[ui].w[0] = 0.f;
-        file.vary.uv[ui].w[1] = 0.f;
-        file.vary.uv[ui].w[2] = 0.f;
+        file.uv[ui].w[0] = 0.f;
+        file.uv[ui].w[1] = 0.f;
+        file.uv[ui].w[2] = 0.f;
     }
 }
 
 void game_get_pos(float p[3], float e[3][3])
 {
-    v_cpy(p,    file.vary.uv[ball].p);
-    v_cpy(e[0], file.vary.uv[ball].e[0]);
-    v_cpy(e[1], file.vary.uv[ball].e[1]);
-    v_cpy(e[2], file.vary.uv[ball].e[2]);
+    v_cpy(p,    file.uv[ball].p);
+    v_cpy(e[0], file.uv[ball].e[0]);
+    v_cpy(e[1], file.uv[ball].e[1]);
+    v_cpy(e[2], file.uv[ball].e[2]);
 }
 
 void game_set_pos(float p[3], float e[3][3])
 {
-    v_cpy(file.vary.uv[ball].p,    p);
-    v_cpy(file.vary.uv[ball].e[0], e[0]);
-    v_cpy(file.vary.uv[ball].e[1], e[1]);
-    v_cpy(file.vary.uv[ball].e[2], e[2]);
+    v_cpy(file.uv[ball].p,    p);
+    v_cpy(file.uv[ball].e[0], e[0]);
+    v_cpy(file.uv[ball].e[1], e[1]);
+    v_cpy(file.uv[ball].e[2], e[2]);
 }
 
 /*---------------------------------------------------------------------------*/

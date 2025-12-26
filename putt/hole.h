@@ -9,7 +9,6 @@
 void  hole_init(const char *);
 void  hole_free(void);
 int   hole_exists(int);
-int   hole_load(int, const char *);
 
 char *hole_player(int);
 char *hole_score(int, int);
@@ -26,7 +25,7 @@ int  curr_count(void);
 const char *curr_scr(void);
 const char *curr_par(void);
 
-int  hole_goto(int, int);
+void hole_goto(int, int);
 int  hole_next(void);
 int  hole_move(void);
 void hole_goal(void);

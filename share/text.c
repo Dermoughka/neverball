@@ -12,10 +12,7 @@
  * General Public License for more details.
  */
 
-#include <SDL.h>
 #include <string.h>
-
-#include "common.h"
 #include "text.h"
 
 /*---------------------------------------------------------------------------*/
@@ -84,63 +81,6 @@ int text_length(const char *string)
             result++;
 
     return result;
-}
-
-/*---------------------------------------------------------------------------*/
-
-char text_input[MAXSTR];
-
-static void (*on_text_input)(int);
-
-#define CALLBACK(typing) do {                   \
-        if (on_text_input)                      \
-            on_text_input(typing);              \
-    } while (0)
-
-void text_input_start(void (*cb)(int))
-{
-    on_text_input = cb;
-    text_input[0] = 0;
-    CALLBACK(0);
-
-    SDL_StartTextInput();
-}
-
-void text_input_stop(void)
-{
-    on_text_input = NULL;
-    SDL_StopTextInput();
-}
-
-int text_input_str(const char *input, int typing)
-{
-    if (input && *input)
-    {
-        SAFECAT(text_input, input);
-        CALLBACK(typing);
-        return 1;
-    }
-    return 0;
-}
-
-int text_input_char(int input)
-{
-    if (text_add_char(input, text_input, sizeof (text_input)))
-    {
-        CALLBACK(0);
-        return 1;
-    }
-    return 0;
-}
-
-int text_input_del(void)
-{
-    if (text_del_char(text_input))
-    {
-        CALLBACK(0);
-        return 1;
-    }
-    return 0;
 }
 
 /*---------------------------------------------------------------------------*/

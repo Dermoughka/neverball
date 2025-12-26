@@ -2,7 +2,7 @@
 {
 "classname" "worldspawn"
 "author" "Mehdi Yousfi-Monod"
-"version" "1.2"
+"version" "1.1"
 "back" "map-back/ocean.sol"
 "grad" "back/ocean.png"
 "shot" "shot-mym/dance2.jpg"
@@ -10,7 +10,7 @@
 "time" "9000"
 "goal" "50"
 "time_hs" "8800 9000"
-"goal_hs" "8800 9000"
+"goal_hs" "8700 8900"
 "coin_hs" "90 70"
 "message" "La ballade dansante.\Let's dance on the moving platform!\Tip: After activating the last moving platform,\ turn around the Thwomp until the goal is reachable."
 "bonus" "1"
@@ -2256,7 +2256,6 @@
 "classname" "info_camp"
 "origin" "1680 592 8"
 "target" "t41"
-"timer" "600"
 }
 // entity 48
 {

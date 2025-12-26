@@ -22,10 +22,10 @@
 #include "game.h"
 #include "geom.h"
 #include "hud.h"
+#include "back.h"
 #include "audio.h"
 #include "config.h"
 #include "fs.h"
-#include "lang.h"
 
 /*---------------------------------------------------------------------------*/
 
@@ -63,7 +63,7 @@ static void hole_init_rc(const char *filename)
 
     /* Load the holes list. */
 
-    if ((fin = fs_open_read(filename)))
+    if ((fin = fs_open(filename, "r")))
     {
         /* Skip shot and description. */
 
@@ -77,7 +77,7 @@ static void hole_init_rc(const char *filename)
                           hole_v[count].file,
                           hole_v[count].back,
                           &hole_v[count].par,
-                          hole_v[count].song) >= 1)
+                          hole_v[count].song) == 4)
                 count++;
         }
 
@@ -87,42 +87,6 @@ static void hole_init_rc(const char *filename)
 
 /*---------------------------------------------------------------------------*/
 
-int hole_load(int h, const char *filename)
-{
-    struct s_base base;
-
-    if (filename != hole_v[h].file)
-    {
-        /* Note filename if it came from elsewhere. */
-
-        SAFECPY(hole_v[h].file, filename);
-    }
-
-    if (sol_load_meta(&base, filename))
-    {
-        int i;
-
-        for (i = 0; i < base.dc; i++)
-        {
-            const char *k = base.av + base.dv[i].ai;
-            const char *v = base.av + base.dv[i].aj;
-
-            if      (strcmp("grad", k) == 0)
-                SAFECPY(hole_v[h].back, v);
-            else if (strcmp("par", k) == 0)
-                hole_v[h].par = atoi(v);
-            else if (strcmp("song", k) == 0)
-                SAFECPY(hole_v[h].song, v);
-        }
-
-        score_v[h][0] = hole_v[h].par;
-
-        sol_free_base(&base);
-        return 1;
-    }
-    return 0;
-}
-
 void hole_init(const char *filename)
 {
     int i;
@@ -130,20 +94,10 @@ void hole_init(const char *filename)
     memset(hole_v,  0, sizeof (struct hole) * MAXHOL);
     memset(score_v, 0, sizeof (int) * MAXPLY * MAXHOL);
 
-    if (filename)
-    {
-        hole_init_rc(filename);
+    hole_init_rc(filename);
 
-        for (i = 0; i < count; i++)
-            hole_load(i, hole_v[i].file);
-    }
-    else
-    {
-        /* Standalone mode.                       */
-        /* Why is this 2, you ask? Good question. */
-
-        count = 2;
-    }
+    for (i = 0; i < count; i++)
+        score_v[i][0] = hole_v[i].par;
 }
 
 void hole_free(void)
@@ -265,7 +219,7 @@ const char *curr_par(void)
 
 /*---------------------------------------------------------------------------*/
 
-int hole_goto(int h, int p)
+void hole_goto(int h, int p)
 {
     int i;
 
@@ -274,24 +228,20 @@ int hole_goto(int h, int p)
         if (h >= 0) hole  = h;
         if (p >= 0) party = p;
 
-        if (game_init(hole_v[hole].file))
+        player = (hole - 1) % party + 1;
+        done   = 0;
+
+        back_init(hole_v[hole].back, 1);
+        game_init(hole_v[hole].file);
+
+        for (i = 1; i <= party; i++)
         {
-            back_init(hole_v[hole].back);
-
-            player = (hole - 1) % party + 1;
-            done   = 0;
-
-            for (i = 1; i <= party; i++)
-            {
-                game_get_pos(ball_p[i], ball_e[i]);
-                stat_v[i] = 0;
-            }
-            game_ball(player);
-            hole_song();
-            return 1;
+            game_get_pos(ball_p[i], ball_e[i]);
+            stat_v[i] = 0;
         }
+        game_ball(player);
+        hole_song();
     }
-    return 0;
 }
 
 int hole_next(void)
@@ -321,8 +271,9 @@ int hole_move(void)
         game_free();
         back_free();
 
-        if (hole_goto(hole, party))
-            return 1;
+        hole_goto(hole, party);
+
+        return 1;
     }
     return 0;
 }

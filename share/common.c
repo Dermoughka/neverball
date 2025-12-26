@@ -1,5 +1,5 @@
 /*
- *  Copyright (C) 2007  Neverball authors
+ *  Copyright (C) 2007  Neverball contributors
  *
  *  This  program is  free software;  you can  redistribute  it and/or
  *  modify it  under the  terms of the  GNU General Public  License as
@@ -24,12 +24,6 @@
 #include <ctype.h>
 #include <stdarg.h>
 #include <assert.h>
-
-/*
- * No platform checking, relying on MinGW to provide.
- */
-#include <sys/stat.h> /* stat() */
-#include <unistd.h>   /* access() */
 
 #include "common.h"
 #include "fs.h"
@@ -81,26 +75,10 @@ int read_line(char **dst, fs_file fin)
 
 char *strip_newline(char *str)
 {
-    if (str && *str)
-    {
-        char *p = str + strlen(str) - 1;
+    char *c = str + strlen(str) - 1;
 
-        while (p >= str && (*p == '\n' || *p =='\r'))
-            *p-- = '\0';
-    }
-
-    return str;
-}
-
-char *strip_spaces(char *str)
-{
-    if (str && *str)
-    {
-        char *p = str + strlen(str) - 1;
-
-        while (p >= str && isspace(*p))
-            *p-- = 0;
-    }
+    while (c >= str && (*c == '\n' || *c =='\r'))
+        *c-- = '\0';
 
     return str;
 }
@@ -149,6 +127,18 @@ char *concat_string(const char *first, ...)
     return full;
 }
 
+char *trunc_string(const char *src, char *dst, int len)
+{
+    static const char ell[] = "...";
+
+    assert(len > sizeof (ell));
+
+    if (dst[len - 1] = '\0', strncpy(dst, src, len), dst[len - 1] != '\0')
+        strcpy(dst + len - sizeof (ell), ell);
+
+    return dst;
+}
+
 time_t make_time_from_utc(struct tm *tm)
 {
     struct tm local, *utc;
@@ -176,9 +166,16 @@ const char *date_to_str(time_t i)
     return str;
 }
 
-int file_exists(const char *path)
+int file_exists(const char *name)
 {
-    return (access(path, F_OK) == 0);
+    FILE *fp;
+
+    if ((fp = fopen(name, "r")))
+    {
+        fclose(fp);
+        return 1;
+    }
+    return 0;
 }
 
 int file_rename(const char *src, const char *dst)
@@ -188,14 +185,6 @@ int file_rename(const char *src, const char *dst)
         remove(dst);
 #endif
     return rename(src, dst);
-}
-
-int file_size(const char *path)
-{
-    struct stat buf;
-    if (stat(path, &buf) == 0)
-        return (int) buf.st_size;
-    return 0;
 }
 
 void file_copy(FILE *fin, FILE *fout)
@@ -231,14 +220,9 @@ int path_is_abs(const char *path)
     return 0;
 }
 
-char *path_join(const char *head, const char *tail)
+static char *path_last_sep(const char *path)
 {
-    return *head ? concat_string(head, "/", tail, NULL) : strdup(tail);
-}
-
-const char *path_last_sep(const char *path)
-{
-    const char *sep;
+    char *sep;
 
     sep = strrchr(path, '/');
 
@@ -249,9 +233,9 @@ const char *path_last_sep(const char *path)
     }
     else
     {
-        const char *tmp;
+        char *tmp;
 
-        if ((tmp = strrchr(path, '\\')) && sep < tmp)
+        if ((tmp = strrchr(sep, '\\')))
             sep = tmp;
     }
 #endif
@@ -259,101 +243,74 @@ const char *path_last_sep(const char *path)
     return sep;
 }
 
-const char *path_next_sep(const char *path)
+char *base_name(const char *name, const char *suffix)
 {
-    size_t skip;
-
-#ifdef _WIN32
-    skip = strcspn(path, "/\\");
-#else
-    skip = strcspn(path, "/");
-#endif
-
-    return *(path + skip) ? path + skip : NULL;
-}
-
-char *path_normalize(char *path)
-{
-    char *sep = path;
-
-    while ((sep = (char *) path_next_sep(sep)))
-        *sep++ = '/';
-
-    return path;
-}
-
-const char *base_name_sans(const char *name, const char *suffix)
-{
-    static char base[MAXSTR];
-    size_t blen, slen;
+    static char buf[MAXSTR];
+    char *base;
 
     if (!name)
         return NULL;
-    if (!suffix)
-        return base_name(name);
 
     /* Remove the directory part. */
 
-    SAFECPY(base, base_name(name));
+    base = path_last_sep(name);
+
+    strncpy(buf, base ? base + 1 : name, sizeof (buf) - 1);
 
     /* Remove the suffix. */
 
-    blen = strlen(base);
-    slen = strlen(suffix);
+    if (suffix)
+    {
+        int l = strlen(buf) - strlen(suffix);
 
-    if (blen >= slen && strcmp(base + blen - slen, suffix) == 0)
-        base[blen - slen] = '\0';
+        if (l >= 0 && strcmp(buf + l, suffix) == 0)
+            buf[l] = '\0';
+    }
 
-    return base;
+    return buf;
 }
 
-const char *base_name(const char *name)
+const char *dir_name(const char *name)
 {
     static char buff[MAXSTR];
 
     char *sep;
 
-    if (!name) {
-        return name;
-    }
+    strncpy(buff, name, sizeof (buff) - 1);
 
-    SAFECPY(buff, name);
-
-    // Remove trailing slashes.
-    while ((sep = (char *) path_last_sep(buff)) && !sep[1]) {
-        *sep = 0;
-    }
-
-    return (sep = (char *) path_last_sep(buff)) ? sep + 1 : buff;
-}
-
-const char *dir_name(const char *name)
-{
-    if (name && *name)
+    if ((sep = path_last_sep(buff)))
     {
-        static char buff[MAXSTR];
+        if (sep == buff)
+            return "/";
 
-        char *sep;
+        *sep = '\0';
 
-        SAFECPY(buff, name);
-
-        // Remove trailing slashes.
-        while ((sep = (char *) path_last_sep(buff)) && !sep[1]) {
-            *sep = 0;
-        }
-
-        if ((sep = (char *) path_last_sep(buff)))
-        {
-            if (sep == buff)
-                return "/";
-
-            *sep = '\0';
-
-            return buff;
-        }
+        return buff;
     }
 
     return ".";
+}
+
+/*
+ * Given a path to a file REF and another path REL relative to REF,
+ * construct and return a new path that can be used to refer to REL
+ * directly.
+ */
+char *path_resolve(const char *ref, const char *rel)
+{
+    static char new[MAXSTR * 2];
+
+    if (path_is_abs(rel))
+    {
+        strncpy(new, rel, sizeof (new) - 1);
+        return new;
+    }
+
+    strncpy(new, dir_name(ref), sizeof (new) - 1);
+    strncat(new, "/",           sizeof (new) - strlen(new) - 1);
+    strncat(new, rel,           sizeof (new) - strlen(new) - 1);
+
+    return new;
 }
 
 /*---------------------------------------------------------------------------*/
@@ -362,47 +319,5 @@ int rand_between(int low, int high)
 {
     return low + rand() / (RAND_MAX / (high - low + 1) + 1);
 }
-
-/*---------------------------------------------------------------------------*/
-
-#ifdef _WIN32
-
-/* MinGW hides this from ANSI C. MinGW-w64 doesn't. */
-_CRTIMP int _putenv(const char *envstring);
-
-int set_env_var(const char *name, const char *value)
-{
-    if (name)
-    {
-        char str[MAXSTR];
-
-        if (value)
-            sprintf(str, "%s=%s", name, value);
-        else
-            sprintf(str, "%s=", name);
-
-        return (_putenv(str) == 0);
-    }
-    return 0;
-}
-
-#else
-
-extern int setenv(const char *name, const char *value, int overwrite);
-extern int unsetenv(const char *name);
-
-int set_env_var(const char *name, const char *value)
-{
-    if (name)
-    {
-        if (value)
-            return (setenv(name, value, 1) == 0);
-        else
-            return (unsetenv(name) == 0);
-    }
-    return 0;
-}
-
-#endif
 
 /*---------------------------------------------------------------------------*/

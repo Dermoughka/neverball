@@ -6,8 +6,8 @@
 #define COURSE_FILE "courses.txt"
 #define MAXCRS 16
 
-void course_init(void);
-void course_free(void);
+void course_init();
+void course_free();
 
 int  course_exists(int);
 int  course_count(void);
